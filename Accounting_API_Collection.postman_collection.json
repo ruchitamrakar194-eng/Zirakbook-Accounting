@@ -1,0 +1,615 @@
+{
+    "info": {
+        "_postman_id": "7a3b1d2e-5c6d-4f8a-9b0c-1d2e3f4g5h6i",
+        "name": "Accounting Software API",
+        "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+        {
+            "name": "Auth",
+            "item": [
+                {
+                    "name": "Login",
+                    "event": [
+                        {
+                            "listen": "test",
+                            "script": {
+                                "exec": [
+                                    "var jsonData = pm.response.json();",
+                                    "if (jsonData.token) {",
+                                    "    pm.environment.set(\"token\", jsonData.token);",
+                                    "}"
+                                ],
+                                "type": "text/javascript"
+                            }
+                        }
+                    ],
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"email\": \"superadmin@gmail.com\",\n    \"password\": \"123\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/auth/login",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "auth",
+                                "login"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Register",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"name\": \"Test User\",\n    \"email\": \"user@example.com\",\n    \"password\": \"password123\",\n    \"role\": \"USER\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/auth/register",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "auth",
+                                "register"
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "Companies",
+            "item": [
+                {
+                    "name": "Get All Companies",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/companies",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "companies"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Create Company",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"name\": \"Test Company\",\n    \"email\": \"test@company.com\",\n    \"phone\": \"1234567890\",\n    \"address\": \"123 Business St\",\n    \"startDate\": \"2024-01-14\",\n    \"endDate\": \"2025-01-14\",\n    \"plan\": \"Silver\",\n    \"planType\": \"Monthly\",\n    \"password\": \"123456\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/companies",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "companies"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Update Company",
+                    "request": {
+                        "method": "PUT",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"name\": \"Updated Company Name\",\n    \"email\": \"updated@company.com\",\n    \"phone\": \"9876543210\",\n    \"address\": \"456 Office Rd\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/companies/1",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "companies",
+                                "1"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Delete Company",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/companies/1",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "companies",
+                                "1"
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "Plans",
+            "item": [
+                {
+                    "name": "Get All Plans",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/plans",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "plans"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Create Plan",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"name\": \"Gold Plan\",\n    \"basePrice\": 100,\n    \"currency\": \"USD\",\n    \"invoiceLimit\": \"Unlimited\",\n    \"additionalInvoicePrice\": 0,\n    \"userLimit\": \"10\",\n    \"storageCapacity\": \"50 GB\",\n    \"billingCycle\": \"Monthly\",\n    \"status\": \"Active\",\n    \"modules\": [\"Account\", \"Inventory\", \"POS\", \"Sales\", \"Purchase\", \"GST Report\", \"User Management\"],\n    \"totalPrice\": 150,\n    \"descriptions\": \"Premium plan for large businesses\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/plans",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "plans"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Update Plan",
+                    "request": {
+                        "method": "PUT",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"name\": \"Updated Gold Plan\",\n    \"basePrice\": 120,\n    \"totalPrice\": 170\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/plans/1",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "plans",
+                                "1"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Delete Plan",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/plans/1",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "plans",
+                                "1"
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "Plan Requests",
+            "item": [
+                {
+                    "name": "Get All Plan Requests",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/plan-requests",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "plan-requests"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Create Plan Request",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"companyName\": \"Indore Traders\",\n    \"email\": \"indore@traders.com\",\n    \"planId\": 1,\n    \"planName\": \"Bronze\",\n    \"billingCycle\": \"Monthly\",\n    \"startDate\": \"2024-01-14\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/plan-requests",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "plan-requests"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Update Plan Request",
+                    "request": {
+                        "method": "PUT",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"status\": \"Approved\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/plan-requests/1",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "plan-requests",
+                                "1"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Delete Plan Request",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/plan-requests/1",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "plan-requests",
+                                "1"
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "Payments",
+            "item": [
+                {
+                    "name": "Get All Payments",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/payments",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "payments"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Create Payment",
+                    "request": {
+                        "method": "POST",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"transactionId\": \"TRX123456789\",\n    \"customer\": \"Indore Traders\",\n    \"paymentMethod\": \"Credit Card\",\n    \"amount\": 1500,\n    \"status\": \"Pending\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/payments",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "payments"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Update Payment",
+                    "request": {
+                        "method": "PUT",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"status\": \"Success\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/payments/1",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "payments",
+                                "1"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Delete Payment",
+                    "request": {
+                        "method": "DELETE",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/payments/1",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "payments",
+                                "1"
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "Dashboard",
+            "item": [
+                {
+                    "name": "Get Dashboard Stats",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/superadmin/dashboard/stats",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "superadmin",
+                                "dashboard",
+                                "stats"
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "Profile",
+            "item": [
+                {
+                    "name": "Get Profile",
+                    "request": {
+                        "method": "GET",
+                        "header": [],
+                        "url": {
+                            "raw": "{{base_url}}/profile",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "profile"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Update Profile",
+                    "request": {
+                        "method": "PUT",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"name\": \"John Doe Updated\",\n    \"email\": \"john@example.com\",\n    \"avatar\": \"\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/profile/update",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "profile",
+                                "update"
+                            ]
+                        }
+                    },
+                    "response": []
+                },
+                {
+                    "name": "Change Password",
+                    "request": {
+                        "method": "PUT",
+                        "header": [],
+                        "body": {
+                            "mode": "raw",
+                            "raw": "{\n    \"oldPassword\": \"123\",\n    \"newPassword\": \"123456\"\n}",
+                            "options": {
+                                "raw": {
+                                    "language": "json"
+                                }
+                            }
+                        },
+                        "url": {
+                            "raw": "{{base_url}}/profile/change-password",
+                            "host": [
+                                "{{base_url}}"
+                            ],
+                            "path": [
+                                "profile",
+                                "change-password"
+                            ]
+                        }
+                    },
+                    "response": []
+                }
+            ]
+        },
+        {
+            "name": "Health Check",
+            "request": {
+                "method": "GET",
+                "header": [],
+                "url": {
+                    "raw": "http://localhost:5000/",
+                    "protocol": "http",
+                    "host": [
+                        "localhost"
+                    ],
+                    "port": "5000",
+                    "path": [
+                        ""
+                    ]
+                }
+            },
+            "response": []
+        }
+    ],
+    "auth": {
+        "type": "bearer",
+        "bearer": [
+            {
+                "key": "token",
+                "value": "{{token}}",
+                "type": "string"
+            }
+        ]
+    },
+    "event": [
+        {
+            "listen": "prerequest",
+            "script": {
+                "type": "text/javascript",
+                "exec": [
+                    ""
+                ]
+            }
+        },
+        {
+            "listen": "test",
+            "script": {
+                "type": "text/javascript",
+                "exec": [
+                    ""
+                ]
+            }
+        }
+    ],
+    "variable": [
+        {
+            "key": "base_url",
+            "value": "http://localhost:5000/api",
+            "type": "string"
+        },
+        {
+            "key": "token",
+            "value": "",
+            "type": "string"
+        }
+    ]
+}
