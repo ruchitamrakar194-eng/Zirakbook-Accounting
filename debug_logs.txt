@@ -11,3 +11,30 @@
 [2026-06-17T13:06:46.635Z] 📡 getCompanyById ID: 13 | company.name: company | company.invoiceLabels: {"billTo":"Billing To: فاتورة الي","shipTo":"Shipping To:","subTotal":"Sub Total المجموعة","tax":"Tax","total":"Total","number":"Number: الرقم","issue":"Issue:","dueDate":"Due Date:","showHeader":true,"showFooter":true,"showWarehouse":true,"showQty":true,"showUom":true,"showRate":true,"showTax":true,"showDiscount":true}
 [2026-06-17T13:06:57.588Z] 📡 getCompanyById ID: 13 | company.name: company | company.invoiceLabels: {"billTo":"Billing To: فاتورة الي","shipTo":"Shipping To:","subTotal":"Sub Total المجموعة","tax":"Tax","total":"Total","number":"Number: الرقم","issue":"Issue:","dueDate":"Due Date:","showHeader":true,"showFooter":true,"showWarehouse":true,"showQty":true,"showUom":true,"showRate":true,"showTax":true,"showDiscount":true}
 [2026-06-17T13:06:59.014Z] 📡 getCompanyById ID: 13 | company.name: company | company.invoiceLabels: {"billTo":"Billing To: فاتورة الي","shipTo":"Shipping To:","subTotal":"Sub Total المجموعة","tax":"Tax","total":"Total","number":"Number: الرقم","issue":"Issue:","dueDate":"Due Date:","showHeader":true,"showFooter":true,"showWarehouse":true,"showQty":true,"showUom":true,"showRate":true,"showTax":true,"showDiscount":true}
+[2026-06-17T13:56:15.755Z] ❌ getCompanyById error: 
+Invalid `prisma.company.findUnique()` invocation in
+C:\Users\kiaan\Desktop\Kiaan\ZirakBook Accounting New Latest\Backend-Zirakbook\src\controllers\companyController.js:160:46
+
+  157 
+  158 const getCompanyById = async (req, res) => {
+  159     try {
+→ 160         const company = await prisma.company.findUnique(
+The column `accounting_jan_db.company.termsInvoice` does not exist in the current database.
+[2026-06-17T13:56:15.772Z] ❌ getCompanyById error: 
+Invalid `prisma.company.findUnique()` invocation in
+C:\Users\kiaan\Desktop\Kiaan\ZirakBook Accounting New Latest\Backend-Zirakbook\src\controllers\companyController.js:160:46
+
+  157 
+  158 const getCompanyById = async (req, res) => {
+  159     try {
+→ 160         const company = await prisma.company.findUnique(
+The column `accounting_jan_db.company.termsInvoice` does not exist in the current database.
+[2026-06-17T13:56:15.783Z] ❌ getCompanyById error: 
+Invalid `prisma.company.findUnique()` invocation in
+C:\Users\kiaan\Desktop\Kiaan\ZirakBook Accounting New Latest\Backend-Zirakbook\src\controllers\companyController.js:160:46
+
+  157 
+  158 const getCompanyById = async (req, res) => {
+  159     try {
+→ 160         const company = await prisma.company.findUnique(
+The column `accounting_jan_db.company.termsInvoice` does not exist in the current database.
