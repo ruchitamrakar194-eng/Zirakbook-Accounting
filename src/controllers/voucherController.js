@@ -180,6 +180,46 @@ const createVoucher = async (req, res) => {
             narration: item.description || ''
         }));
 
+        // Validate voucher date is not before the linked customer/vendor account creation date
+        if (date) {
+            const txDate = new Date(date);
+            txDate.setHours(0, 0, 0, 0);
+
+            if (customerId) {
+                const cust = await prisma.customer.findUnique({
+                    where: { id: parseInt(customerId) },
+                    select: { creationDate: true }
+                });
+                if (cust?.creationDate) {
+                    const accountDate = new Date(cust.creationDate);
+                    accountDate.setHours(0, 0, 0, 0);
+                    if (txDate < accountDate) {
+                        return res.status(400).json({
+                            success: false,
+                            message: `Voucher date (${txDate.toDateString()}) cannot be before the customer's account creation date (${accountDate.toDateString()}).`
+                        });
+                    }
+                }
+            }
+
+            if (vendorId) {
+                const vend = await prisma.vendor.findUnique({
+                    where: { id: parseInt(vendorId) },
+                    select: { creationDate: true }
+                });
+                if (vend?.creationDate) {
+                    const accountDate = new Date(vend.creationDate);
+                    accountDate.setHours(0, 0, 0, 0);
+                    if (txDate < accountDate) {
+                        return res.status(400).json({
+                            success: false,
+                            message: `Voucher date (${txDate.toDateString()}) cannot be before the vendor's account creation date (${accountDate.toDateString()}).`
+                        });
+                    }
+                }
+            }
+        }
+
         const voucher = await prisma.voucher.create({
             data: {
                 customFields: customFields ? (typeof customFields === 'string' ? customFields : JSON.stringify(customFields)) : null,
@@ -292,6 +332,8 @@ const createVoucher = async (req, res) => {
         }
 
         await numberingService.incrementNumber(companyId, 'voucher', resolvedVoucherNumber);
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'CREATE', 'Voucher', voucher.id, `${voucher.voucherType} Voucher #${voucher.voucherNumber} created with amount ${voucher.totalAmount}`);
         res.status(201).json({ success: true, data: voucher });
     } catch (error) {
         console.error('Create Voucher Error:', error);
@@ -768,6 +810,8 @@ const updateVoucher = async (req, res) => {
                 return v;
             });
 
+            const { logActivity } = require('../utils/auditLogger');
+            logActivity(req, 'UPDATE', 'Voucher', updatedVoucher.id, `${updatedVoucher.voucherType} Voucher #${updatedVoucher.voucherNumber} updated with amount ${updatedVoucher.totalAmount}`);
             res.status(200).json({ success: true, data: updatedVoucher });
         }
     } catch (error) {
@@ -844,6 +888,32 @@ const deleteVoucher = async (req, res) => {
             await tx.voucher.delete({ where: { id: voucher.id } });
         });
 
+        // Sync customer.accountBalance from ledger after deletion (if voucher was linked to a customer)
+        try {
+            if (voucher.customerId) {
+                const customer = await prisma.customer.findUnique({
+                    where: { id: voucher.customerId },
+                    select: { id: true, ledgerId: true }
+                });
+                if (customer && customer.ledgerId) {
+                    const ledger = await prisma.ledger.findUnique({
+                        where: { id: customer.ledgerId },
+                        select: { currentBalance: true }
+                    });
+                    if (ledger) {
+                        await prisma.customer.update({
+                            where: { id: customer.id },
+                            data: { accountBalance: ledger.currentBalance }
+                        });
+                    }
+                }
+            }
+        } catch (syncErr) {
+            console.error('Customer balance sync error after voucher delete:', syncErr);
+        }
+
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'DELETE', 'Voucher', voucher.id, `${voucher.voucherType} Voucher #${voucher.voucherNumber} deleted with amount ${voucher.totalAmount}`);
         res.status(200).json({ success: true, message: 'Voucher deleted successfully' });
     } catch (error) {
         console.error('Delete Voucher Error:', error);

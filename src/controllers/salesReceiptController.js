@@ -25,6 +25,20 @@ const createReceipt = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Invalid customer or bank/cash account' });
         }
 
+        // Date must not be before the customer's account creation date
+        if (customer.creationDate && date) {
+            const txDate = new Date(date);
+            const accountDate = new Date(customer.creationDate);
+            txDate.setHours(0, 0, 0, 0);
+            accountDate.setHours(0, 0, 0, 0);
+            if (txDate < accountDate) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Receipt date (${txDate.toDateString()}) cannot be before the customer's account creation date (${accountDate.toDateString()}).`
+                });
+            }
+        }
+
         // Normalize allocations
         let normalizedAllocations = [];
         if (allocations && allocations.length > 0) {
@@ -171,6 +185,8 @@ const createReceipt = async (req, res) => {
         });
 
         await numberingService.incrementNumber(companyId, 'receipt', receiptNumber);
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'CREATE', 'Receipt', result.id, `Receipt #${result.receiptNumber} created for Customer ID ${result.customerId} with amount ${result.amount}`);
         res.status(201).json({ success: true, data: result });
     } catch (error) {
         console.error('Receipt Creation Error:', error);
@@ -424,6 +440,8 @@ const updateReceipt = async (req, res) => {
             timeout: 30000
         });
 
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'UPDATE', 'Receipt', result.id, `Receipt #${result.receiptNumber} updated for Customer ID ${result.customerId} with amount ${result.amount}`);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         console.error('Receipt Update Error:', error);
@@ -526,6 +544,32 @@ const deleteReceipt = async (req, res) => {
             timeout: 30000
         });
 
+        // Sync customer.accountBalance from ledger after deletion
+        try {
+            if (existingReceipt.customerId) {
+                const customer = await prisma.customer.findUnique({
+                    where: { id: existingReceipt.customerId },
+                    select: { id: true, ledgerId: true }
+                });
+                if (customer && customer.ledgerId) {
+                    const ledger = await prisma.ledger.findUnique({
+                        where: { id: customer.ledgerId },
+                        select: { currentBalance: true }
+                    });
+                    if (ledger) {
+                        await prisma.customer.update({
+                            where: { id: customer.id },
+                            data: { accountBalance: ledger.currentBalance }
+                        });
+                    }
+                }
+            }
+        } catch (syncErr) {
+            console.error('Customer balance sync error after receipt delete:', syncErr);
+        }
+
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'DELETE', 'Receipt', existingReceipt.id, `Receipt #${existingReceipt.receiptNumber} deleted for Customer ID ${existingReceipt.customerId} with amount ${existingReceipt.amount}`);
         res.status(200).json({ success: true, message: 'Receipt deleted successfully' });
     } catch (error) {
         console.error('Receipt Delete Error:', error);

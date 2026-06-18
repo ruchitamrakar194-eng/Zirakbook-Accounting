@@ -1,0 +1,289 @@
+--- File: C:\Users\kiaan\Desktop\Kiaan\ZirakBook Accounting New Latest\Frontend-Zirakbook\src\pages\company\Accounts\Income\Income.jsx ---
+22: if (!companySettings?.customFieldsConfig) return [];
+24: const parsed = typeof companySettings.customFieldsConfig === 'string'
+25: ? JSON.parse(companySettings.customFieldsConfig)
+26: : companySettings.customFieldsConfig;
+32: console.error("Error parsing customFieldsConfig:", e);
+244: if (selectedIncome.customFields) {
+246: customFieldVals = typeof selectedIncome.customFields === 'string'
+247: ? JSON.parse(selectedIncome.customFields)
+248: : selectedIncome.customFields;
+362: customFields: JSON.stringify(customFieldValues)
+399: if (row.customFields) {
+401: fieldValues = typeof row.customFields === 'string'
+402: ? JSON.parse(row.customFields)
+403: : row.customFields;
+554: if (selectedIncome?.customFields) {
+556: customFieldVals = typeof selectedIncome.customFields === 'string'
+557: ? JSON.parse(selectedIncome.customFields)
+558: : selectedIncome.customFields;
+--- File: C:\Users\kiaan\Desktop\Kiaan\ZirakBook Accounting New Latest\Frontend-Zirakbook\src\pages\company\Expenses\Expenses.jsx ---
+23: if (!companySettings?.customFieldsConfig) return [];
+25: const parsed = typeof companySettings.customFieldsConfig === 'string'
+26: ? JSON.parse(companySettings.customFieldsConfig)
+27: : companySettings.customFieldsConfig;
+33: console.error("Error parsing customFieldsConfig:", e);
+166: customFields: JSON.stringify(customFieldValues)
+203: if (row.customFields) {
+205: fieldValues = typeof row.customFields === 'string'
+206: ? JSON.parse(row.customFields)
+207: : row.customFields;
+332: if (selectedExpense.customFields) {
+334: customFieldVals = typeof selectedExpense.customFields === 'string'
+335: ? JSON.parse(selectedExpense.customFields)
+336: : selectedExpense.customFields;
+665: if (selectedExpense?.customFields) {
+667: customFieldVals = typeof selectedExpense.customFields === 'string'
+668: ? JSON.parse(selectedExpense.customFields)
+669: : selectedExpense.customFields;
+--- File: C:\Users\kiaan\Desktop\Kiaan\ZirakBook Accounting New Latest\Frontend-Zirakbook\src\pages\company\POS\POS.jsx ---
+84: if (!companyDetails?.customFieldsConfig) return [];
+86: const parsed = typeof companyDetails.customFieldsConfig === 'string'
+87: ? JSON.parse(companyDetails.customFieldsConfig)
+88: : companyDetails.customFieldsConfig;
+94: console.error("Error parsing customFieldsConfig:", e);
+287: if (invoice.customFields) {
+289: fieldValues = typeof invoice.customFields === 'string'
+290: ? JSON.parse(invoice.customFields)
+291: : invoice.customFields;
+481: customFields: JSON.stringify(customFieldValues),
+1409: if (invoiceData?.customFields) {
+1411: customFieldVals = typeof invoiceData.customFields === 'string'
+1412: ? JSON.parse(invoiceData.customFields)
+1413: : invoiceData.customFields;
+--- File: C:\Users\kiaan\Desktop\Kiaan\ZirakBook Accounting New Latest\Frontend-Zirakbook\src\pages\company\Purchases\GoodsReceipt\GoodsReceipt.jsx ---
+37: if (!companySettings?.customFieldsConfig) return [];
+39: const parsed = typeof companySettings.customFieldsConfig === 'string'
+40: ? JSON.parse(companySettings.customFieldsConfig)
+41: : companySettings.customFieldsConfig;
+47: console.error("Error parsing customFieldsConfig:", e);
+339: if (grn.customFields) {
+341: fieldValues = typeof grn.customFields === 'string'
+342: ? JSON.parse(grn.customFields)
+343: : grn.customFields;
+423: if (grn.customFields) {
+425: fieldValues = typeof grn.customFields === 'string'
+426: ? JSON.parse(grn.customFields)
+427: : grn.customFields;
+486: customFields: JSON.stringify(customFieldValues),
+760: if (grn?.customFields) {
+762: customFieldVals = typeof grn.customFields === 'string'
+763: ? JSON.parse(grn.customFields)
+764: : grn.customFields;
+--- File: C:\Users\kiaan\Desktop\Kiaan\ZirakBook Accounting New Latest\Frontend-Zirakbook\src\pages\company\Purchases\Payment\Payment.jsx ---
+37: if (!companySettings?.customFieldsConfig) return [];
+39: const parsed = typeof companySettings.customFieldsConfig === 'string'
+40: ? JSON.parse(companySettings.customFieldsConfig)
+41: : companySettings.customFieldsConfig;
+47: console.error("Error parsing customFieldsConfig:", e);
+393: if (p.customFields) {
+395: fieldValues = typeof p.customFields === 'string'
+396: ? JSON.parse(p.customFields)
+397: : p.customFields;
+464: customFields: JSON.stringify(customFieldValues)
+1228: if (viewPayment?.customFields) {
+1230: customFieldVals = typeof viewPayment.customFields === 'string'
+1231: ? JSON.parse(viewPayment.customFields)
+1232: : viewPayment.customFields;
+--- File: C:\Users\kiaan\Desktop\Kiaan\ZirakBook Accounting New Latest\Frontend-Zirakbook\src\pages\company\Purchases\PurchaseBill\PurchaseBill.jsx ---
+92: if (!companySettings?.customFieldsConfig) return [];
+94: const parsed = typeof companySettings.customFieldsConfig === 'string'
+95: ? JSON.parse(companySettings.customFieldsConfig)
+96: : companySettings.customFieldsConfig;
+102: console.error("Error parsing customFieldsConfig:", e);
+692: if (billData.customFields) {
+694: fieldValues = typeof billData.customFields === 'string'
+695: ? JSON.parse(billData.customFields)
+696: : billData.customFields;
+809: if (billToEdit.customFields) {
+811: fieldValues = typeof billToEdit.customFields === 'string'
+812: ? JSON.parse(billToEdit.customFields)
+813: : billToEdit.customFields;
+887: customFields: JSON.stringify(customFieldValues),
+1224: if (viewBill?.customFields) {
+1226: customFieldVals = typeof viewBill.customFields === 'string'
+1227: ? JSON.parse(viewBill.customFields)
+1228: : viewBill.customFields;
+--- File: C:\Users\kiaan\Desktop\Kiaan\ZirakBook Accounting New Latest\Frontend-Zirakbook\src\pages\company\Purchases\PurchaseOrder\PurchaseOrder.jsx ---
+63: if (!companySettings?.customFieldsConfig) return [];
+65: const parsed = typeof companySettings.customFieldsConfig === 'string'
+66: ? JSON.parse(companySettings.customFieldsConfig)
+67: : companySettings.customFieldsConfig;
+73: console.error("Error parsing customFieldsConfig:", e);
+370: if (order.customFields) {
+372: fieldValues = typeof order.customFields === 'string'
+373: ? JSON.parse(order.customFields)
+374: : order.customFields;
+467: if (orderToEdit.customFields) {
+469: fieldValues = typeof orderToEdit.customFields === 'string'
+470: ? JSON.parse(orderToEdit.customFields)
+471: : orderToEdit.customFields;
+553: customFields: JSON.stringify(customFieldValues),
+898: if (order?.customFields) {
+900: customFieldVals = typeof order.customFields === 'string'
+901: ? JSON.parse(order.customFields)
+902: : order.customFields;
+--- File: C:\Users\kiaan\Desktop\Kiaan\ZirakBook Accounting New Latest\Frontend-Zirakbook\src\pages\company\Purchases\PurchaseQuotation\PurchaseQuotation.jsx ---
+30: if (!companySettings?.customFieldsConfig) return [];
+32: const parsed = typeof companySettings.customFieldsConfig === 'string'
+33: ? JSON.parse(companySettings.customFieldsConfig)
+34: : companySettings.customFieldsConfig;
+40: console.error("Error parsing customFieldsConfig:", e);
+259: if (quote.customFields) {
+261: fieldValues = typeof quote.customFields === 'string'
+262: ? JSON.parse(quote.customFields)
+263: : quote.customFields;
+323: if (quoteToEdit.customFields) {
+325: fieldValues = typeof quoteToEdit.customFields === 'string'
+326: ? JSON.parse(quoteToEdit.customFields)
+327: : quoteToEdit.customFields;
+435: customFields: JSON.stringify(customFieldValues)
+769: if (quoteToView?.customFields) {
+771: customFieldVals = typeof quoteToView.customFields === 'string'
+772: ? JSON.parse(quoteToView.customFields)
+773: : quoteToView.customFields;
+--- File: C:\Users\kiaan\Desktop\Kiaan\ZirakBook Accounting New Latest\Frontend-Zirakbook\src\pages\company\Purchases\PurchaseReturn\PurchaseReturn.jsx ---
+28: if (!companySettings?.customFieldsConfig) return [];
+30: const parsed = typeof companySettings.customFieldsConfig === 'string'
+31: ? JSON.parse(companySettings.customFieldsConfig)
+32: : companySettings.customFieldsConfig;
+38: console.error("Error parsing customFieldsConfig:", e);
+291: if (item.customFields) {
+293: fieldValues = typeof item.customFields === 'string'
+294: ? JSON.parse(item.customFields)
+295: : item.customFields;
+337: customFields: JSON.stringify(customFieldValues)
+846: if (selectedReturn?.customFields) {
+848: customFieldVals = typeof selectedReturn.customFields === 'string'
+849: ? JSON.parse(selectedReturn.customFields)
+850: : selectedReturn.customFields;
+--- File: C:\Users\kiaan\Desktop\Kiaan\ZirakBook Accounting New Latest\Frontend-Zirakbook\src\pages\company\Sales\DeliveryChallan\DeliveryChallan.jsx ---
+35: if (!companySettings?.customFieldsConfig) return [];
+37: const parsed = typeof companySettings.customFieldsConfig === 'string'
+38: ? JSON.parse(companySettings.customFieldsConfig)
+39: : companySettings.customFieldsConfig;
+45: console.error("Error parsing customFieldsConfig:", e);
+328: if (challan.customFields) {
+330: fieldValues = typeof challan.customFields === 'string'
+331: ? JSON.parse(challan.customFields)
+332: : challan.customFields;
+401: if (challan.customFields) {
+403: fieldValues = typeof challan.customFields === 'string'
+404: ? JSON.parse(challan.customFields)
+405: : challan.customFields;
+493: customFields: JSON.stringify(customFieldValues),
+906: if (dc?.customFields) {
+908: customFieldVals = typeof dc.customFields === 'string'
+909: ? JSON.parse(dc.customFields)
+910: : dc.customFields;
+--- File: C:\Users\kiaan\Desktop\Kiaan\ZirakBook Accounting New Latest\Frontend-Zirakbook\src\pages\company\Sales\Invoice\Invoice.jsx ---
+46: if (!companySettings?.customFieldsConfig) return [];
+48: const parsed = typeof companySettings.customFieldsConfig === 'string'
+49: ? JSON.parse(companySettings.customFieldsConfig)
+50: : companySettings.customFieldsConfig;
+56: console.error("Error parsing customFieldsConfig:", e);
+192: if (inv.customFields) {
+194: fieldValues = typeof inv.customFields === 'string'
+195: ? JSON.parse(inv.customFields)
+196: : inv.customFields;
+216: customFields: JSON.stringify(customFieldValues),
+738: customFields: JSON.stringify(customFieldValues),
+1054: if (selectedInvoice?.customFields) {
+1056: customFieldVals = typeof selectedInvoice.customFields === 'string'
+1057: ? JSON.parse(selectedInvoice.customFields)
+1058: : selectedInvoice.customFields;
+--- File: C:\Users\kiaan\Desktop\Kiaan\ZirakBook Accounting New Latest\Frontend-Zirakbook\src\pages\company\Sales\Payment\Payment.jsx ---
+28: if (!companySettings?.customFieldsConfig) return [];
+30: const parsed = typeof companySettings.customFieldsConfig === 'string'
+31: ? JSON.parse(companySettings.customFieldsConfig)
+32: : companySettings.customFieldsConfig;
+38: console.error("Error parsing customFieldsConfig:", e);
+356: customFields: JSON.stringify(customFieldValues)
+512: if (rec.customFields) {
+514: fieldValues = typeof rec.customFields === 'string'
+515: ? JSON.parse(rec.customFields)
+516: : rec.customFields;
+827: if (currentPayment?.customFields) {
+829: customFieldVals = typeof currentPayment.customFields === 'string'
+830: ? JSON.parse(currentPayment.customFields)
+831: : currentPayment.customFields;
+--- File: C:\Users\kiaan\Desktop\Kiaan\ZirakBook Accounting New Latest\Frontend-Zirakbook\src\pages\company\Sales\Quotation\Quotation.jsx ---
+29: if (!companySettings?.customFieldsConfig) return [];
+31: const parsed = typeof companySettings.customFieldsConfig === 'string'
+32: ? JSON.parse(companySettings.customFieldsConfig)
+33: : companySettings.customFieldsConfig;
+39: console.error("Error parsing customFieldsConfig:", e);
+241: if (quoteToEdit.customFields) {
+243: fieldValues = typeof quoteToEdit.customFields === 'string'
+244: ? JSON.parse(quoteToEdit.customFields)
+245: : quoteToEdit.customFields;
+321: customFields: JSON.stringify(customFieldValues)
+674: if (quoteToView?.customFields) {
+676: customFieldVals = typeof quoteToView.customFields === 'string'
+677: ? JSON.parse(quoteToView.customFields)
+678: : quoteToView.customFields;
+--- File: C:\Users\kiaan\Desktop\Kiaan\ZirakBook Accounting New Latest\Frontend-Zirakbook\src\pages\company\Sales\SalesOrder\SalesOrder.jsx ---
+80: if (!companySettings?.customFieldsConfig) return [];
+82: const parsed = typeof companySettings.customFieldsConfig === 'string'
+83: ? JSON.parse(companySettings.customFieldsConfig)
+84: : companySettings.customFieldsConfig;
+90: console.error("Error parsing customFieldsConfig:", e);
+292: if (orderToEdit.customFields) {
+294: fieldValues = typeof orderToEdit.customFields === 'string'
+295: ? JSON.parse(orderToEdit.customFields)
+296: : orderToEdit.customFields;
+373: customFields: JSON.stringify(customFieldValues),
+797: if (order?.customFields) {
+799: customFieldVals = typeof order.customFields === 'string'
+800: ? JSON.parse(order.customFields)
+801: : order.customFields;
+--- File: C:\Users\kiaan\Desktop\Kiaan\ZirakBook Accounting New Latest\Frontend-Zirakbook\src\pages\company\Sales\SalesReturn\SalesReturn.jsx ---
+29: if (!companySettings?.customFieldsConfig) return [];
+31: const parsed = typeof companySettings.customFieldsConfig === 'string'
+32: ? JSON.parse(companySettings.customFieldsConfig)
+33: : companySettings.customFieldsConfig;
+39: console.error("Error parsing customFieldsConfig:", e);
+412: if (returnData.customFields) {
+414: fieldValues = typeof returnData.customFields === 'string'
+415: ? JSON.parse(returnData.customFields)
+416: : returnData.customFields;
+585: customFields: JSON.stringify(customFieldValues)
+650: customFields: JSON.stringify(customFieldValues)
+1545: if (selectedReturn?.customFields) {
+1547: customFieldVals = typeof selectedReturn.customFields === 'string'
+1548: ? JSON.parse(selectedReturn.customFields)
+1549: : selectedReturn.customFields;
+--- File: C:\Users\kiaan\Desktop\Kiaan\ZirakBook Accounting New Latest\Frontend-Zirakbook\src\pages\company\Settings\CompanySettings\CompanySettings.jsx ---
+22: const [customFieldsConfig, setCustomFieldsConfig] = useState([]);
+586: if (data.customFieldsConfig) {
+588: const parsed = typeof data.customFieldsConfig === 'string'
+589: ? JSON.parse(data.customFieldsConfig)
+590: : data.customFieldsConfig;
+593: console.error('Error parsing customFieldsConfig:', e);
+695: formDataToSend.append('customFieldsConfig', JSON.stringify(customFieldsConfig));
+935: className={`companySetting-tab-btn ${activeTab === 'customFields' ? 'active' : ''}`}
+936: onClick={() => setActiveTab('customFields')}
+2086: {activeTab === 'customFields' && (
+2088: customFieldsConfig={customFieldsConfig}
+2154: const CustomFieldsTab = ({ customFieldsConfig, setCustomFieldsConfig }) => {
+2177: const activeFields = customFieldsConfig.find(item => item.transactionType === selectedType)?.fields || [];
+--- File: C:\Users\kiaan\Desktop\Kiaan\ZirakBook Accounting New Latest\Frontend-Zirakbook\src\pages\company\Voucher\CreateVoucher.jsx ---
+24: if (!companySettings?.customFieldsConfig) return [];
+26: const parsed = typeof companySettings.customFieldsConfig === 'string'
+27: ? JSON.parse(companySettings.customFieldsConfig)
+28: : companySettings.customFieldsConfig;
+34: console.error("Error parsing customFieldsConfig:", e);
+221: if (selectedVoucher.customFields) {
+223: customFieldVals = typeof selectedVoucher.customFields === 'string'
+224: ? JSON.parse(selectedVoucher.customFields)
+225: : selectedVoucher.customFields;
+349: customFields: JSON.stringify(customFieldValues)
+385: customFields: JSON.stringify(customFieldValues)
+568: if (det.customFields) {
+570: fieldValues = typeof det.customFields === 'string'
+571: ? JSON.parse(det.customFields)
+572: : det.customFields;
+969: if (selectedVoucher?.customFields) {
+971: customFieldVals = typeof selectedVoucher.customFields === 'string'
+972: ? JSON.parse(selectedVoucher.customFields)
+973: : selectedVoucher.customFields;

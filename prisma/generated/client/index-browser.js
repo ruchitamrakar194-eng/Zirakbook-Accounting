@@ -1221,6 +1221,19 @@ exports.Prisma.Transaction_numberingScalarFieldEnum = {
   updatedAt: 'updatedAt'
 };
 
+exports.Prisma.AuditlogScalarFieldEnum = {
+  id: 'id',
+  userId: 'userId',
+  userEmail: 'userEmail',
+  userName: 'userName',
+  action: 'action',
+  entity: 'entity',
+  entityId: 'entityId',
+  details: 'details',
+  companyId: 'companyId',
+  createdAt: 'createdAt'
+};
+
 exports.Prisma.SortOrder = {
   asc: 'asc',
   desc: 'desc'
@@ -1462,7 +1475,8 @@ exports.Prisma.ModelName = {
   inventory_consumption: 'inventory_consumption',
   receiptinvoiceallocation: 'receiptinvoiceallocation',
   paymentbillallocation: 'paymentbillallocation',
-  transaction_numbering: 'transaction_numbering'
+  transaction_numbering: 'transaction_numbering',
+  auditlog: 'auditlog'
 };
 
 /**

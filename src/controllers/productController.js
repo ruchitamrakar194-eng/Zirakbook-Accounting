@@ -217,6 +217,9 @@ const createProduct = async (req, res) => {
             }
         }
 
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'CREATE', 'Product', product.id, `Product ${product.name} (SKU: ${product.sku}) created`);
+
         res.status(201).json({
             success: true,
             message: 'Product created successfully',
@@ -542,6 +545,9 @@ const updateProduct = async (req, res) => {
             }
         }
 
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'UPDATE', 'Product', product.id, `Product ${product.name} (SKU: ${product.sku}) updated`);
+
         res.status(200).json({
             success: true,
             message: 'Product updated successfully',
@@ -733,6 +739,9 @@ const deleteProduct = async (req, res) => {
                 companyId: parseInt(companyId)
             }
         });
+
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'DELETE', 'Product', product.id, `Product ${product.name} (SKU: ${product.sku}) deleted`);
 
         res.status(200).json({ success: true, message: 'Product deleted successfully' });
     } catch (error) {

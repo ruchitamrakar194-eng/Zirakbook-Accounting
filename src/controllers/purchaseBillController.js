@@ -51,6 +51,24 @@ const createBill = async (req, res) => {
             });
         }
 
+        // Validate bill date is not before vendor's account creation date
+        const vendorForDateCheck = await prisma.vendor.findUnique({
+            where: { id: parseInt(vendorId) },
+            select: { creationDate: true }
+        });
+        if (vendorForDateCheck?.creationDate && date) {
+            const txDate = new Date(date);
+            const accountDate = new Date(vendorForDateCheck.creationDate);
+            txDate.setHours(0, 0, 0, 0);
+            accountDate.setHours(0, 0, 0, 0);
+            if (txDate < accountDate) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Bill date (${txDate.toDateString()}) cannot be before the vendor's account creation date (${accountDate.toDateString()}).`
+                });
+            }
+        }
+
         let calculatedSubtotal = 0;
         let calculatedItemDiscount = 0;
         let calculatedTaxSum = 0;
@@ -436,6 +454,8 @@ const createBill = async (req, res) => {
         });
 
         await numberingService.incrementNumber(companyId, 'purchasebill', billNumber);
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'CREATE', 'PurchaseBill', result.id, `Purchase Bill #${result.billNumber} created for Vendor ID ${result.vendorId} with amount ${result.totalAmount}`);
         res.status(201).json({ success: true, data: result });
     } catch (error) {
         console.error('Create Purchase Bill Error:', error);
@@ -653,7 +673,10 @@ const deleteBill = async (req, res) => {
                 data: { accountBalance: { decrement: bill.totalAmount * (bill.exchangeRate || 1.0) } }
             });
 
-            // 3. Delete related transactions and journal entries
+            // 3. Delete payment allocations FIRST to avoid FK constraint error on purchasebill delete
+            await tx.paymentbillallocation.deleteMany({ where: { purchaseBillId: bill.id } });
+
+            // 4. Delete related transactions and journal entries
             const journalEntryIds = [...new Set(bill.transaction.map(t => t.journalEntryId).filter(Boolean))];
 
             await tx.transaction.deleteMany({ where: { purchaseBillId: bill.id } });
@@ -668,74 +691,79 @@ const deleteBill = async (req, res) => {
                 }
             });
 
-            // 4. Reverse Physical Stock & Valuation Layers
-            const invConfig = await getInventoryConfig(companyId);
-            const valuationMethod = invConfig.valuationMethod || 'WAC';
+            // 5. Reverse Physical Stock & Valuation Layers
+            //    Only reverse stock if the bill was NOT created from a GRN.
+            //    If a GRN was linked, the stock was added by the GRN flow — do NOT double-reverse it here.
+            if (!bill.grnId) {
+                const invConfig = await getInventoryConfig(companyId);
+                const valuationMethod = invConfig.valuationMethod || 'WAC';
 
-            // Get bill items for WAC reversal
-            const billItemsForReversal = await tx.purchasebillitem.findMany({
-                where: { purchaseBillId: bill.id },
-                include: { product: { include: { uom: true } }, uom: true }
-            });
+                const billItemsForReversal = await tx.purchasebillitem.findMany({
+                    where: { purchaseBillId: bill.id },
+                    include: { product: { include: { uom: true } }, uom: true }
+                });
 
-            const { convertToBaseQuantity, convertTransRateToBaseRate } = require('../services/uomConversionService');
+                const { convertToBaseQuantity, convertTransRateToBaseRate } = require('../services/uomConversionService');
 
-            for (const item of billItemsForReversal) {
-                if (item.productId && item.warehouseId) {
-                    const baseQty = convertToBaseQuantity(item.quantity, item.uom, item.product?.uom);
+                for (const item of billItemsForReversal) {
+                    if (item.productId && item.warehouseId) {
+                        const baseQty = convertToBaseQuantity(item.quantity, item.uom, item.product?.uom);
 
-                    // Revert physical stock
-                    await tx.stock.upsert({
-                        where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
-                        create: {
-                            warehouseId: item.warehouseId,
-                            productId: item.productId,
-                            quantity: -baseQty,
-                            initialQty: 0,
-                            minOrderQty: 0
-                        },
-                        update: {
-                            quantity: { decrement: baseQty }
-                        }
-                    });
+                        // Revert physical stock
+                        await tx.stock.upsert({
+                            where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
+                            create: {
+                                warehouseId: item.warehouseId,
+                                productId: item.productId,
+                                quantity: -baseQty,
+                                initialQty: 0,
+                                minOrderQty: 0
+                            },
+                            update: {
+                                quantity: { decrement: baseQty }
+                            }
+                        });
 
-                    // Log inventory transaction for return/reversal
-                    await tx.inventorytransaction.create({
-                        data: {
-                            date: new Date(),
-                            type: 'RETURN',
-                            productId: item.productId,
-                            fromWarehouseId: item.warehouseId,
-                            quantity: baseQty,
-                            reason: `Purchase Bill Deleted: ${bill.billNumber}`,
-                            companyId: parseInt(companyId)
-                        }
-                    });
+                        // Log inventory transaction for return/reversal
+                        await tx.inventorytransaction.create({
+                            data: {
+                                date: new Date(),
+                                type: 'RETURN',
+                                productId: item.productId,
+                                fromWarehouseId: item.warehouseId,
+                                quantity: baseQty,
+                                reason: `Purchase Bill Deleted: ${bill.billNumber}`,
+                                companyId: parseInt(companyId)
+                            }
+                        });
+                    }
                 }
+
+                await reverseStockIn(tx, {
+                    purchaseBillId: bill.id,
+                    billItems: billItemsForReversal.map(i => {
+                        const baseQty = convertToBaseQuantity(i.quantity, i.uom, i.product?.uom);
+                        const baseRate = convertTransRateToBaseRate(i.rate, i.uom, i.product?.uom);
+                        return {
+                            productId: i.productId,
+                            warehouseId: i.warehouseId,
+                            quantity: baseQty,
+                            rate: baseRate
+                        };
+                    }),
+                    method: valuationMethod
+                });
             }
 
-            await reverseStockIn(tx, {
-                purchaseBillId: bill.id,
-                billItems: billItemsForReversal.map(i => {
-                    const baseQty = convertToBaseQuantity(i.quantity, i.uom, i.product?.uom);
-                    const baseRate = convertTransRateToBaseRate(i.rate, i.uom, i.product?.uom);
-                    return {
-                        productId: i.productId,
-                        warehouseId: i.warehouseId,
-                        quantity: baseQty,
-                        rate: baseRate
-                    };
-                }),
-                method: valuationMethod
-            });
-
-            // 5. Delete Bill Items and Bill
+            // 6. Delete Bill Items and Bill
             await tx.purchasebillitem.deleteMany({ where: { purchaseBillId: bill.id } });
             await tx.purchasebill.delete({ where: { id: bill.id } });
         }, {
             timeout: 90000
         });
 
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'DELETE', 'PurchaseBill', bill.id, `Purchase Bill #${bill.billNumber} deleted for Vendor ID ${bill.vendorId} with amount ${bill.totalAmount}`);
         res.status(200).json({ success: true, message: 'Bill deleted successfully' });
     } catch (error) {
         console.error('Delete Bill Error:', error);
@@ -1136,6 +1164,8 @@ const updateBill = async (req, res) => {
             timeout: 30000
         });
 
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'UPDATE', 'PurchaseBill', updated.id, `Purchase Bill #${updated.billNumber} updated for Vendor ID ${updated.vendorId} with amount ${updated.totalAmount}`);
         res.status(200).json({ success: true, data: updated });
     } catch (error) {
         console.error('Update Purchase Bill Error:', error);

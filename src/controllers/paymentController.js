@@ -38,6 +38,20 @@ const createPayment = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Invalid vendor or bank/cash account' });
         }
 
+        // Date must not be before the vendor's account creation date
+        if (vendor.creationDate && date) {
+            const txDate = new Date(date);
+            const accountDate = new Date(vendor.creationDate);
+            txDate.setHours(0, 0, 0, 0);
+            accountDate.setHours(0, 0, 0, 0);
+            if (txDate < accountDate) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Payment date (${txDate.toDateString()}) cannot be before the vendor's account creation date (${accountDate.toDateString()}).`
+                });
+            }
+        }
+
         // Normalize payment mode for Prisma enum
         const modeMap = {
             'Bank Transfer': 'BANK',
@@ -205,6 +219,8 @@ const createPayment = async (req, res) => {
         });
 
         await numberingService.incrementNumber(companyId, 'payment', paymentNumber || result.paymentNumber);
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'CREATE', 'Payment', result.id, `Payment #${result.paymentNumber} created for Vendor ID ${result.vendorId} with amount ${result.amount}`);
         res.status(201).json({ success: true, data: result });
     } catch (error) {
         console.error('Create Payment Error:', error);
@@ -579,6 +595,8 @@ const updatePayment = async (req, res) => {
             timeout: 30000
         });
 
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'UPDATE', 'Payment', result.id, `Payment #${result.paymentNumber} updated for Vendor ID ${result.vendorId} with amount ${result.amount}`);
         res.json(result);
     } catch (error) {
         console.error('Update Payment Error:', error);
@@ -683,6 +701,8 @@ const deletePayment = async (req, res) => {
             timeout: 30000
         });
 
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'DELETE', 'Payment', payment.id, `Payment #${payment.paymentNumber} deleted for Vendor ID ${payment.vendorId} with amount ${payment.amount}`);
         res.json({ success: true, message: 'Payment deleted successfully' });
     } catch (error) {
         console.error('Delete Payment Error:', error);

@@ -179,6 +179,7 @@ model company {
   voucher              voucher[]
   role                 role[]
   transaction_numbering transaction_numbering[]
+  auditlog             auditlog[]
 
   @@index([planId], map: "Company_planId_fkey")
 }
@@ -1382,6 +1383,7 @@ model user {
   updatedAt       DateTime          @default(now()) @updatedAt
   passwordrequest passwordrequest[]
   company         company?          @relation(fields: [companyId], references: [id], map: "User_companyId_fkey")
+  auditlog        auditlog[]
 
   @@index([companyId], map: "User_companyId_fkey")
 }
@@ -1831,4 +1833,23 @@ model transaction_numbering {
 
   @@unique([companyId, transactionType], map: "TransactionNumbering_companyId_transactionType_key")
   @@index([companyId], map: "TransactionNumbering_companyId_fkey")
+}
+
+model auditlog {
+  id        Int      @id @default(autoincrement())
+  userId    Int?
+  userEmail String?
+  userName  String?
+  action    String   // "CREATE", "UPDATE", "DELETE"
+  entity    String   // "Invoice", "PurchaseBill", "Receipt", "Payment", "Voucher", "Customer", "Vendor", "Product", "POS"
+  entityId  Int?
+  details   String?  @db.Text
+  companyId Int
+  createdAt DateTime @default(now())
+
+  user      user?    @relation(fields: [userId], references: [id], onDelete: SetNull)
+  company   company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@index([companyId])
+  @@index([userId])
 }

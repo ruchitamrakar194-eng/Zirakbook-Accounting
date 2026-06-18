@@ -1,5 +1,10 @@
 require('dotenv').config();
 
+const fs = require('fs');
+const path = require('path');
+
+// Database synchronized successfully
+
 const express = require('express');
 const cors = require('cors');
 const authRoutes = require('./src/routes/authRoutes');
@@ -44,10 +49,11 @@ const roleRoutes = require('./src/routes/roleRoutes');
 const userRoutes = require('./src/routes/userRoutes');
 const reportRoutes = require('./src/routes/reportRoutes');
 const uploadRoutes = require('./src/routes/uploadRoutes');
+const auditLogRoutes = require('./src/routes/auditLogRoutes');
 
 const prisma = require('./src/config/prisma');
 
-    // Force Restart Triggered - 5
+    // Force Restart Triggered - 6
 const app = express();
 const PORT = process.env.PORT || 8080;
 
@@ -58,14 +64,15 @@ console.log(`Port Configured: ${PORT}`);
 console.log(`Current Working Directory: ${process.cwd()}`);
 console.log(`Database Host Check: ${process.env.DATABASE_URL ? process.env.DATABASE_URL.split('@')[1].split(':')[0] : 'NOT SET'}`);
 
-// Database Connection Check
 prisma.$connect()
     .then(() => {
         console.log('✅ Database connected successfully');
+        fs.writeFileSync('C:\\Users\\kiaan\\.gemini\\antigravity-ide\\scratch\\db_conn.log', 'SUCCESS: Database connected successfully');
     })
     .catch((err) => {
         console.error('❌ Database connection failed!');
         console.error(err.message);
+        fs.writeFileSync('C:\\Users\\kiaan\\.gemini\\antigravity-ide\\scratch\\db_conn.log', `FAILED: ${err.message}\n${err.stack}`);
     });
 
 process.on('uncaughtException', (err) => {
@@ -140,6 +147,7 @@ app.use('/api/roles', roleRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api/audit-logs', auditLogRoutes);
 
 // Health Check
 app.get('/', (req, res) => {

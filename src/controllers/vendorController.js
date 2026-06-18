@@ -167,6 +167,8 @@ const createVendor = async (req, res) => {
             maxWait: 5000
         });
 
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'CREATE', 'Vendor', result.vendor.id, `Vendor ${result.vendor.name} created`);
         res.status(201).json({
             success: true,
             message: 'Vendor created successfully with linked ledger',
@@ -394,6 +396,8 @@ const updateVendor = async (req, res) => {
             timeout: 15000
         });
 
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'UPDATE', 'Vendor', result.id, `Vendor ${result.name} updated`);
         res.status(200).json({
             success: true,
             message: 'Vendor updated successfully',
@@ -590,6 +594,8 @@ const deleteVendor = async (req, res) => {
             maxWait: 5000
         });
 
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'DELETE', 'Vendor', vendor.id, `Vendor ${vendor.name} deleted`);
         res.status(200).json({
             success: true,
             message: 'Vendor deleted successfully'

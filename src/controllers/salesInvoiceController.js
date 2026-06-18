@@ -54,6 +54,20 @@ const createInvoice = async (req, res) => {
         if (!customer) {
             return res.status(400).json({ success: false, message: 'Customer not found' });
         }
+
+        // Date must not be before the customer's account creation date
+        if (customer.creationDate && date) {
+            const txDate = new Date(date);
+            const accountDate = new Date(customer.creationDate);
+            txDate.setHours(0, 0, 0, 0);
+            accountDate.setHours(0, 0, 0, 0);
+            if (txDate < accountDate) {
+                return res.status(400).json({
+                    success: false,
+                    message: `Invoice date (${txDate.toDateString()}) cannot be before the customer's account creation date (${accountDate.toDateString()}).`
+                });
+            }
+        }
         // customer.ledger will be null if the referenced ledger was deleted (orphaned ledgerId)
         // We'll auto-repair this inside the transaction if needed.
 
@@ -670,6 +684,8 @@ const createInvoice = async (req, res) => {
         });
 
         await numberingService.incrementNumber(companyId, 'invoice', invoiceNumber);
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'CREATE', 'Invoice', result.id, `Invoice #${result.invoiceNumber} created for Customer ID ${result.customerId} with amount ${result.totalAmount}`);
         res.status(201).json({ success: true, data: result });
     } catch (error) {
         console.error('Invoice Creation Error:', error);
@@ -1397,6 +1413,8 @@ const updateInvoice = async (req, res) => {
             return updatedInvoice;
         }, { timeout: 90000 });
 
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'UPDATE', 'Invoice', result.id, `Invoice #${result.invoiceNumber} updated for Customer ID ${result.customerId} with amount ${result.totalAmount}`);
         res.status(200).json({ success: true, data: result });
     } catch (error) {
         console.error('Invoice Update Error:', error);
@@ -1512,6 +1530,32 @@ const deleteInvoice = async (req, res) => {
             await tx.invoice.delete({ where: { id: invoice.id } });
         }, { timeout: 90000 });
 
+        // Sync customer.accountBalance from ledger after deletion
+        try {
+            if (invoice.customerId) {
+                const customer = await prisma.customer.findUnique({
+                    where: { id: invoice.customerId },
+                    select: { id: true, ledgerId: true }
+                });
+                if (customer && customer.ledgerId) {
+                    const ledger = await prisma.ledger.findUnique({
+                        where: { id: customer.ledgerId },
+                        select: { currentBalance: true }
+                    });
+                    if (ledger) {
+                        await prisma.customer.update({
+                            where: { id: customer.id },
+                            data: { accountBalance: ledger.currentBalance }
+                        });
+                    }
+                }
+            }
+        } catch (syncErr) {
+            console.error('Customer balance sync error after invoice delete:', syncErr);
+        }
+
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'DELETE', 'Invoice', invoice.id, `Invoice #${invoice.invoiceNumber} deleted for Customer ID ${invoice.customerId} with amount ${invoice.totalAmount}`);
         res.status(200).json({ success: true, message: 'Invoice deleted successfully' });
     } catch (error) {
         console.error('Invoice Delete Error:', error);

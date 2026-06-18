@@ -169,6 +169,8 @@ const createCustomer = async (req, res) => {
             maxWait: 5000
         });
 
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'CREATE', 'Customer', result.customer.id, `Customer ${result.customer.name} created`);
         res.status(201).json({
             success: true,
             message: 'Customer created successfully with linked ledger',
@@ -385,6 +387,8 @@ const updateCustomer = async (req, res) => {
             timeout: 15000
         });
 
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'UPDATE', 'Customer', result.id, `Customer ${result.name} updated`);
         res.status(200).json({
             success: true,
             message: 'Customer updated successfully',
@@ -585,6 +589,8 @@ const deleteCustomer = async (req, res) => {
             maxWait: 5000
         });
 
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'DELETE', 'Customer', customer.id, `Customer ${customer.name} deleted`);
         res.status(200).json({
             success: true,
             message: 'Customer deleted successfully'

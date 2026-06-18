@@ -368,6 +368,10 @@ const createPOSInvoice = async (req, res) => {
         });
 
         await numberingService.incrementNumber(currentCompanyId, 'posinvoice', resolvedInvoiceNumber);
+        
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'CREATE', 'POS', result.id, `POS Invoice #${result.invoiceNumber} created with amount ${result.totalAmount}`);
+
         res.status(201).json({ success: true, data: result });
 
     } catch (error) {
@@ -458,6 +462,7 @@ const deletePOSInvoice = async (req, res) => {
         // User asked for "delete".
         // Robust way: Delete Transaction entries (reverse ledger balances first), then delete Invoice.
 
+        let invoiceToDelete = null;
         await prisma.$transaction(async (tx) => {
             const invoice = await tx.posinvoice.findUnique({
                 where: { id: parseInt(id) },
@@ -546,10 +551,16 @@ const deletePOSInvoice = async (req, res) => {
 
             // 3. Delete Invoice
             await tx.posinvoice.delete({ where: { id: parseInt(id) } });
+            invoiceToDelete = invoice;
         }, {
             maxWait: 15000,
             timeout: 90000
         });
+
+        const { logActivity } = require('../utils/auditLogger');
+        if (invoiceToDelete) {
+            logActivity(req, 'DELETE', 'POS', invoiceToDelete.id, `POS Invoice #${invoiceToDelete.invoiceNumber} deleted/voided`);
+        }
 
         res.status(200).json({ success: true, message: 'POS Invoice deleted successfully' });
     } catch (error) {
@@ -994,6 +1005,9 @@ const updatePOSInvoice = async (req, res) => {
             maxWait: 15000,
             timeout: 90000
         });
+
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'UPDATE', 'POS', result.id, `POS Invoice #${result.invoiceNumber} updated with amount ${result.totalAmount}`);
 
         res.status(200).json({ success: true, data: result });
 
