@@ -808,8 +808,13 @@ const getInvoiceById = async (req, res) => {
 
         if (!companyId) return res.status(400).json({ success: false, message: 'Company ID Missing' });
 
+        const parsedId = parseInt(id);
+        if (isNaN(parsedId)) {
+            return res.status(400).json({ success: false, message: 'Invalid Invoice ID format' });
+        }
+
         const invoice = await prisma.invoice.findFirst({
-            where: { id: parseInt(id), companyId: parseInt(companyId) },
+            where: { id: parsedId, companyId: parseInt(companyId) },
             include: {
                 invoiceitem: {
                     include: {
@@ -1529,8 +1534,13 @@ const getNextNumber = async (req, res) => {
 const getPublicInvoiceById = async (req, res) => {
     try {
         const { id } = req.params;
+        const parsedId = parseInt(id);
+        if (isNaN(parsedId)) {
+            return res.status(400).json({ success: false, message: 'Invalid Invoice ID format' });
+        }
+
         const invoice = await prisma.invoice.findUnique({
-            where: { id: parseInt(id) },
+            where: { id: parsedId },
             include: {
                 invoiceitem: {
                     include: {
