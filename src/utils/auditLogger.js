@@ -16,9 +16,8 @@ const logActivity = (req, action, entity, entityId, details) => {
             return;
         }
 
-        const userId = req.user.id ? parseInt(req.user.id) : null;
-        const userEmail = req.user.email || null;
-        const userName = req.user.name || null;
+        const rawUserId = req.user.userId !== undefined ? req.user.userId : req.user.id;
+        const userId = rawUserId ? parseInt(rawUserId) : null;
         const companyId = req.user.companyId ? parseInt(req.user.companyId) : null;
 
         if (!companyId) {
@@ -29,18 +28,41 @@ const logActivity = (req, action, entity, entityId, details) => {
         const parsedEntityId = entityId ? parseInt(entityId) : null;
 
         // Non-blocking database insertion
-        prisma.auditlog.create({
-            data: {
-                userId,
-                userEmail,
-                userName,
-                action,
-                entity,
-                entityId: isNaN(parsedEntityId) ? null : parsedEntityId,
-                details: typeof details === 'object' ? JSON.stringify(details) : details,
-                companyId
+        const logPromise = (async () => {
+            let userEmail = req.user.email || null;
+            let userName = req.user.name || null;
+
+            // If name or email is not in the token payload, fetch them from the database
+            if (userId && (!userEmail || !userName)) {
+                try {
+                    const dbUser = await prisma.user.findUnique({
+                        where: { id: userId },
+                        select: { name: true, email: true }
+                    });
+                    if (dbUser) {
+                        userEmail = dbUser.email;
+                        userName = dbUser.name;
+                    }
+                } catch (dbErr) {
+                    console.error('[AuditLog Error] Failed to fetch user from DB:', dbErr.message);
+                }
             }
-        }).catch(err => {
+
+            await prisma.auditlog.create({
+                data: {
+                    userId,
+                    userEmail,
+                    userName,
+                    action,
+                    entity,
+                    entityId: isNaN(parsedEntityId) ? null : parsedEntityId,
+                    details: typeof details === 'object' ? JSON.stringify(details) : details,
+                    companyId
+                }
+            });
+        })();
+
+        logPromise.catch(err => {
             console.error('[AuditLog Error] Failed to insert audit log:', err.message);
         });
     } catch (err) {

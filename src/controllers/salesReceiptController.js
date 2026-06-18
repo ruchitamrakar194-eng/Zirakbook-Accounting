@@ -53,6 +53,8 @@ const createReceipt = async (req, res) => {
             }];
         }
 
+        const allocatedSum = normalizedAllocations.reduce((sum, a) => sum + a.amount, 0);
+
         const totalLimit = parseFloat(amount) + parseFloat(discountAmount || 0);
         if (allocatedSum > totalLimit) {
             return res.status(400).json({ success: false, message: 'Total allocation cannot exceed the received amount plus discount' });

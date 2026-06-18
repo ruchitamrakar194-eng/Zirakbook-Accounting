@@ -115,6 +115,8 @@ const login = async (req, res) => {
                 userId: user.id, 
                 role: user.role, 
                 companyId: user.companyId,
+                email: user.email,
+                name: user.name,
                 permissions: permissions,
                 planModules: planModules
             },
@@ -210,6 +212,8 @@ const impersonate = async (req, res) => {
                 userId: user.id, 
                 role: user.role, 
                 companyId: user.companyId,
+                email: user.email,
+                name: user.name,
                 permissions: permissions,
                 planModules: planModules,
                 isImpersonated: true

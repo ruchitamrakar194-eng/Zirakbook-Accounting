@@ -194,7 +194,14 @@ const createCustomer = async (req, res) => {
 // Get All Customers
 const getAllCustomers = async (req, res) => {
     try {
-        const companyId = req.user.companyId;
+        const rawCompanyId = req.user?.companyId || req.query.companyId;
+        if (!rawCompanyId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Company ID is required'
+            });
+        }
+        const companyId = parseInt(rawCompanyId);
 
         const customers = await prisma.customer.findMany({
             where: { companyId },
@@ -230,7 +237,14 @@ const getAllCustomers = async (req, res) => {
 // Get Customer by ID
 const getCustomerById = async (req, res) => {
     try {
-        const companyId = req.user.companyId;
+        const rawCompanyId = req.user?.companyId || req.query.companyId;
+        if (!rawCompanyId) {
+            return res.status(400).json({
+                success: false,
+                message: 'Company ID is required'
+            });
+        }
+        const companyId = parseInt(rawCompanyId);
         const { id } = req.params;
 
         const customer = await prisma.customer.findFirst({
