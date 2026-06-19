@@ -44,11 +44,13 @@ const createReceipt = async (req, res) => {
         if (allocations && allocations.length > 0) {
             normalizedAllocations = allocations.map(a => ({
                 invoiceId: parseInt(a.invoiceId),
+                invoiceType: a.invoiceType || 'TAX_INVOICE',
                 amount: parseFloat(a.amount)
             }));
         } else if (invoiceId) {
             normalizedAllocations = [{
                 invoiceId: parseInt(invoiceId),
+                invoiceType: req.body.invoiceType || 'TAX_INVOICE',
                 amount: parseFloat(amount)
             }];
         }
@@ -61,6 +63,10 @@ const createReceipt = async (req, res) => {
         }
 
         const result = await prisma.$transaction(async (tx) => {
+            // Find first TAX_INVOICE allocation (if any) to populate receipt.invoiceId (FK constraint)
+            const standardAlloc = normalizedAllocations.find(a => a.invoiceType === 'TAX_INVOICE');
+            const receiptInvoiceId = invoiceId && (req.body.invoiceType !== 'POS_INVOICE') ? parseInt(invoiceId) : (standardAlloc?.invoiceId || null);
+
             // 1. Create Receipt Record
             const receipt = await tx.receipt.create({
                 data: {
@@ -68,7 +74,7 @@ const createReceipt = async (req, res) => {
                     receiptNumber,
                     date: new Date(date),
                     customerId: parseInt(customerId),
-                    invoiceId: invoiceId ? parseInt(invoiceId) : (normalizedAllocations[0]?.invoiceId || null),
+                    invoiceId: receiptInvoiceId,
                     amount: parseFloat(amount),
                     paymentMode: paymentMode,
                     referenceNumber,
@@ -81,7 +87,8 @@ const createReceipt = async (req, res) => {
             });
 
             // 2. Create Allocations and Update Invoice Balances
-            let totalLedgerAmount = 0;
+            let standardLedgerAmount = 0;
+            let posLedgerAmount = 0;
             let totalLedgerDiscount = 0;
             const appliedDiscount = parseFloat(discountAmount || 0);
 
@@ -91,46 +98,85 @@ const createReceipt = async (req, res) => {
 
             for (let i = 0; i < normalizedAllocations.length; i++) {
                 const alloc = normalizedAllocations[i];
+                const allocDiscount = (i === 0) ? appliedDiscount : 0;
                 
-                // Create link record
-                await tx.receiptinvoiceallocation.create({
-                    data: {
-                        receiptId: receipt.id,
-                        invoiceId: alloc.invoiceId,
-                        amount: alloc.amount,
-                        companyId: parseInt(companyId)
+                if (alloc.invoiceType === 'POS_INVOICE') {
+                    // Update POS invoice
+                    const posInvoice = await tx.posinvoice.findUnique({ where: { id: alloc.invoiceId } });
+                    if (posInvoice) {
+                        const newPaid = (posInvoice.paidAmount || 0) + alloc.amount + allocDiscount;
+                        const newBalance = (posInvoice.totalAmount || 0) - newPaid;
+                        
+                        await tx.posinvoice.update({
+                            where: { id: alloc.invoiceId },
+                            data: {
+                                paidAmount: newPaid,
+                                balanceAmount: newBalance,
+                                status: newBalance <= 0.01 ? 'Paid' : (newPaid > 0 ? 'Partial' : 'Due'),
+                                updatedAt: new Date()
+                            }
+                        });
+
+                        // Create linked transaction for POS payment history
+                        await tx.transaction.create({
+                            data: {
+                                date: new Date(date),
+                                voucherType: 'RECEIPT',
+                                voucherNumber: receiptNumber,
+                                debitLedgerId: bankLedger.id,
+                                creditLedgerId: customer.ledgerId,
+                                amount: alloc.amount,
+                                narration: `Payment received for POS ${posInvoice.invoiceNumber} via ${paymentMode || 'BANK'}`,
+                                companyId: parseInt(companyId),
+                                receiptId: receipt.id,
+                                posInvoiceId: alloc.invoiceId,
+                                updatedAt: new Date()
+                            }
+                        });
+
+                        posLedgerAmount += alloc.amount;
+                        totalLedgerDiscount += allocDiscount;
                     }
-                });
-
-                const invoice = await tx.invoice.findUnique({ where: { id: alloc.invoiceId } });
-                if (invoice) {
-                    const allocDiscount = (i === 0) ? appliedDiscount : 0;
-                    const newPaid = (invoice.paidAmount || 0) + alloc.amount + allocDiscount;
-                    const newBalance = (invoice.totalAmount || 0) - newPaid;
-
-                    await tx.invoice.update({
-                        where: { id: alloc.invoiceId },
+                } else {
+                    // Create link record (Standard Tax Invoice)
+                    await tx.receiptinvoiceallocation.create({
                         data: {
-                            paidAmount: newPaid,
-                            balanceAmount: newBalance,
-                            status: newBalance <= 0 ? 'PAID' : (newPaid > 0 ? 'PARTIAL' : 'UNPAID')
+                            receiptId: receipt.id,
+                            invoiceId: alloc.invoiceId,
+                            amount: alloc.amount,
+                            companyId: parseInt(companyId)
                         }
                     });
 
-                    const rate = invoice.exchangeRate || 1.0;
-                    totalLedgerAmount += alloc.amount * rate;
-                    totalLedgerDiscount += allocDiscount * rate;
+                    const invoice = await tx.invoice.findUnique({ where: { id: alloc.invoiceId } });
+                    if (invoice) {
+                        const newPaid = (invoice.paidAmount || 0) + alloc.amount + allocDiscount;
+                        const newBalance = (invoice.totalAmount || 0) - newPaid;
+
+                        await tx.invoice.update({
+                            where: { id: alloc.invoiceId },
+                            data: {
+                                paidAmount: newPaid,
+                                balanceAmount: newBalance,
+                                status: newBalance <= 0 ? 'PAID' : (newPaid > 0 ? 'PARTIAL' : 'UNPAID')
+                            }
+                        });
+
+                        const rate = invoice.exchangeRate || 1.0;
+                        standardLedgerAmount += alloc.amount * rate;
+                        totalLedgerDiscount += allocDiscount * rate;
+                    }
                 }
             }
 
             // Unallocated amount is in company base currency
-            totalLedgerAmount += unallocatedAmount;
+            standardLedgerAmount += unallocatedAmount;
 
             // 3. Accounting Entries
             // DR Cash/Bank
             await tx.ledger.update({
                 where: { id: bankLedger.id },
-                data: { currentBalance: { increment: totalLedgerAmount } }
+                data: { currentBalance: { increment: standardLedgerAmount + posLedgerAmount } }
             });
 
             // DR Discount Expense Ledger
@@ -144,24 +190,26 @@ const createReceipt = async (req, res) => {
             // CR Customer
             await tx.ledger.update({
                 where: { id: customer.ledgerId },
-                data: { currentBalance: { decrement: totalLedgerAmount + totalLedgerDiscount } }
+                data: { currentBalance: { decrement: standardLedgerAmount + posLedgerAmount + totalLedgerDiscount } }
             });
 
-            // Log Cash/Bank Transaction (Decoupled from invoice)
-            await tx.transaction.create({
-                data: {
-                    date: new Date(date),
-                    voucherType: 'RECEIPT',
-                    voucherNumber: receiptNumber,
-                    debitLedgerId: bankLedger.id,
-                    creditLedgerId: customer.ledgerId,
-                    amount: totalLedgerAmount,
-                    narration: `Payment received from ${customer.name}`,
-                    companyId: parseInt(companyId),
-                    receiptId: receipt.id,
-                    invoiceId: null // Keep null so it is decoupled and never cascade-deleted!
-                }
-            });
+            // Log Cash/Bank Transaction (Decoupled from invoice) for standard allocations & unallocated portion
+            if (standardLedgerAmount > 0) {
+                await tx.transaction.create({
+                    data: {
+                        date: new Date(date),
+                        voucherType: 'RECEIPT',
+                        voucherNumber: receiptNumber,
+                        debitLedgerId: bankLedger.id,
+                        creditLedgerId: customer.ledgerId,
+                        amount: standardLedgerAmount,
+                        narration: `Payment received from ${customer.name}`,
+                        companyId: parseInt(companyId),
+                        receiptId: receipt.id,
+                        invoiceId: null // Keep null so it is decoupled and never cascade-deleted!
+                    }
+                });
+            }
 
             // Log Discount Transaction (Decoupled from invoice)
             if (discountLedgerId && totalLedgerDiscount > 0) {
@@ -222,11 +270,13 @@ const updateReceipt = async (req, res) => {
         if (allocations && allocations.length > 0) {
             normalizedNewAllocations = allocations.map(a => ({
                 invoiceId: parseInt(a.invoiceId),
+                invoiceType: a.invoiceType || 'TAX_INVOICE',
                 amount: parseFloat(a.amount)
             }));
         } else if (req.body.invoiceId) {
             normalizedNewAllocations = [{
                 invoiceId: parseInt(req.body.invoiceId),
+                invoiceType: req.body.invoiceType || 'TAX_INVOICE',
                 amount: parseFloat(amount || existingReceipt.amount)
             }];
         }
@@ -255,6 +305,32 @@ const updateReceipt = async (req, res) => {
                             paidAmount: revPaid,
                             balanceAmount: revBalance,
                             status: revBalance <= 0 ? 'PAID' : (revPaid > 0 ? 'PARTIAL' : 'UNPAID')
+                        }
+                    });
+                }
+            }
+
+            // Retrieve old POS transactions first to revert old POS invoice balances
+            const oldPosTransactions = await tx.transaction.findMany({
+                where: {
+                    receiptId: parseInt(id),
+                    posInvoiceId: { not: null },
+                    voucherType: 'RECEIPT'
+                }
+            });
+
+            for (const t of oldPosTransactions) {
+                const posInvoice = await tx.posinvoice.findUnique({ where: { id: t.posInvoiceId } });
+                if (posInvoice) {
+                    const oldAllocDiscount = 0; // POS discount is not split-allocated on standard edits currently
+                    const revPaid = Math.max(0, (posInvoice.paidAmount || 0) - t.amount - oldAllocDiscount);
+                    const revBalance = (posInvoice.totalAmount || 0) - revPaid;
+                    await tx.posinvoice.update({
+                        where: { id: t.posInvoiceId },
+                        data: {
+                            paidAmount: revPaid,
+                            balanceAmount: revBalance,
+                            status: revBalance <= 0 ? 'Paid' : (revPaid > 0 ? 'Partial' : 'Due')
                         }
                     });
                 }
@@ -317,6 +393,10 @@ const updateReceipt = async (req, res) => {
             const finalBankId = cashBankAccountId ? parseInt(cashBankAccountId) : existingReceipt.cashBankAccountId;
             const finalDiscountLedgerId = discountLedgerId !== undefined ? (discountLedgerId ? parseInt(discountLedgerId) : null) : existingReceipt.discountLedgerId;
 
+            // Find first TAX_INVOICE allocation (if any) to populate receipt.invoiceId (FK constraint)
+            const standardNewAlloc = normalizedNewAllocations.find(a => a.invoiceType === 'TAX_INVOICE');
+            const receiptInvoiceId = req.body.invoiceId && (req.body.invoiceType !== 'POS_INVOICE') ? parseInt(req.body.invoiceId) : (standardNewAlloc?.invoiceId || null);
+
             const updatedReceipt = await tx.receipt.update({
                 where: { id: parseInt(id) },
                 data: {
@@ -329,49 +409,88 @@ const updateReceipt = async (req, res) => {
                     notes,
                     discountAmount: finalDiscount,
                     discountLedgerId: finalDiscountLedgerId,
-                    invoiceId: req.body.invoiceId ? parseInt(req.body.invoiceId) : (normalizedNewAllocations[0]?.invoiceId || null)
+                    invoiceId: receiptInvoiceId
                 }
             });
 
             // Create new allocations and update new invoices
-            let newLedgerAmount = 0;
+            let newStandardLedgerAmount = 0;
+            let newPosLedgerAmount = 0;
             let newLedgerDiscount = 0;
             const newAllocatedSum = normalizedNewAllocations.reduce((sum, a) => sum + a.amount, 0);
             const newUnallocatedAmount = finalAmount - newAllocatedSum;
 
             for (let i = 0; i < normalizedNewAllocations.length; i++) {
                 const alloc = normalizedNewAllocations[i];
+                const allocDiscount = (i === 0) ? finalDiscount : 0;
 
-                await tx.receiptinvoiceallocation.create({
-                    data: {
-                        receiptId: parseInt(id),
-                        invoiceId: alloc.invoiceId,
-                        amount: alloc.amount,
-                        companyId: parseInt(companyId)
+                if (alloc.invoiceType === 'POS_INVOICE') {
+                    const posInvoice = await tx.posinvoice.findUnique({ where: { id: alloc.invoiceId } });
+                    if (posInvoice) {
+                        const newPaid = (posInvoice.paidAmount || 0) + alloc.amount + allocDiscount;
+                        const newBalance = (posInvoice.totalAmount || 0) - newPaid;
+
+                        await tx.posinvoice.update({
+                            where: { id: alloc.invoiceId },
+                            data: {
+                                paidAmount: newPaid,
+                                balanceAmount: newBalance,
+                                status: newBalance <= 0.01 ? 'Paid' : (newPaid > 0 ? 'Partial' : 'Due'),
+                                updatedAt: new Date()
+                            }
+                        });
+
+                        // Create linked transaction for POS payment history
+                        await tx.transaction.create({
+                            data: {
+                                date: date ? new Date(date) : existingReceipt.date,
+                                voucherType: 'RECEIPT',
+                                voucherNumber: existingReceipt.receiptNumber,
+                                debitLedgerId: finalBankId,
+                                creditLedgerId: existingReceipt.customer.ledgerId,
+                                amount: alloc.amount,
+                                narration: `Payment received for POS ${posInvoice.invoiceNumber} via ${paymentMode || 'BANK'}`,
+                                companyId: parseInt(companyId),
+                                receiptId: parseInt(id),
+                                posInvoiceId: alloc.invoiceId,
+                                updatedAt: new Date()
+                            }
+                        });
+
+                        newPosLedgerAmount += alloc.amount;
+                        newLedgerDiscount += allocDiscount;
                     }
-                });
-
-                const invoice = await tx.invoice.findUnique({ where: { id: alloc.invoiceId } });
-                if (invoice) {
-                    const allocDiscount = (i === 0) ? finalDiscount : 0;
-                    const newPaid = (invoice.paidAmount || 0) + alloc.amount + allocDiscount;
-                    const newBalance = (invoice.totalAmount || 0) - newPaid;
-
-                    await tx.invoice.update({
-                        where: { id: alloc.invoiceId },
+                } else {
+                    await tx.receiptinvoiceallocation.create({
                         data: {
-                            paidAmount: newPaid,
-                            balanceAmount: newBalance,
-                            status: newBalance <= 0 ? 'PAID' : (newPaid > 0 ? 'PARTIAL' : 'UNPAID')
+                            receiptId: parseInt(id),
+                            invoiceId: alloc.invoiceId,
+                            amount: alloc.amount,
+                            companyId: parseInt(companyId)
                         }
                     });
 
-                    const rate = invoice.exchangeRate || 1.0;
-                    newLedgerAmount += alloc.amount * rate;
-                    newLedgerDiscount += allocDiscount * rate;
+                    const invoice = await tx.invoice.findUnique({ where: { id: alloc.invoiceId } });
+                    if (invoice) {
+                        const newPaid = (invoice.paidAmount || 0) + alloc.amount + allocDiscount;
+                        const newBalance = (invoice.totalAmount || 0) - newPaid;
+
+                        await tx.invoice.update({
+                            where: { id: alloc.invoiceId },
+                            data: {
+                                paidAmount: newPaid,
+                                balanceAmount: newBalance,
+                                status: newBalance <= 0 ? 'PAID' : (newPaid > 0 ? 'PARTIAL' : 'UNPAID')
+                            }
+                        });
+
+                        const rate = invoice.exchangeRate || 1.0;
+                        newStandardLedgerAmount += alloc.amount * rate;
+                        newLedgerDiscount += allocDiscount * rate;
+                    }
                 }
             }
-            newLedgerAmount += newUnallocatedAmount;
+            newStandardLedgerAmount += newUnallocatedAmount;
 
             // Apply new ledger balances
             if (finalBankId) {
@@ -379,7 +498,7 @@ const updateReceipt = async (req, res) => {
                 if (bankLedger) {
                     await tx.ledger.update({
                         where: { id: finalBankId },
-                        data: { currentBalance: { increment: newLedgerAmount } }
+                        data: { currentBalance: { increment: newStandardLedgerAmount + newPosLedgerAmount } }
                     });
                 }
             }
@@ -399,26 +518,28 @@ const updateReceipt = async (req, res) => {
                 if (customerLedger) {
                     await tx.ledger.update({
                         where: { id: existingReceipt.customer.ledgerId },
-                        data: { currentBalance: { decrement: newLedgerAmount + newLedgerDiscount } }
+                        data: { currentBalance: { decrement: newStandardLedgerAmount + newPosLedgerAmount + newLedgerDiscount } }
                     });
                 }
             }
 
-            // Create new transaction (decoupled)
-            await tx.transaction.create({
-                data: {
-                    date: date ? new Date(date) : existingReceipt.date,
-                    voucherType: 'RECEIPT',
-                    voucherNumber: existingReceipt.receiptNumber,
-                    debitLedgerId: finalBankId,
-                    creditLedgerId: existingReceipt.customer.ledgerId,
-                    amount: newLedgerAmount,
-                    narration: `Updated Payment from ${existingReceipt.customer.name}`,
-                    companyId: parseInt(companyId),
-                    receiptId: parseInt(id),
-                    invoiceId: null // Decoupled
-                }
-            });
+            // Create new lumped transaction for standard allocations & unallocated portion (decoupled)
+            if (newStandardLedgerAmount > 0) {
+                await tx.transaction.create({
+                    data: {
+                        date: date ? new Date(date) : existingReceipt.date,
+                        voucherType: 'RECEIPT',
+                        voucherNumber: existingReceipt.receiptNumber,
+                        debitLedgerId: finalBankId,
+                        creditLedgerId: existingReceipt.customer.ledgerId,
+                        amount: newStandardLedgerAmount,
+                        narration: `Updated Payment from ${existingReceipt.customer.name}`,
+                        companyId: parseInt(companyId),
+                        receiptId: parseInt(id),
+                        invoiceId: null // Decoupled
+                    }
+                });
+            }
 
             if (finalDiscountLedgerId && newLedgerDiscount > 0) {
                 await tx.transaction.create({
@@ -472,7 +593,7 @@ const deleteReceipt = async (req, res) => {
         }
 
         await prisma.$transaction(async (tx) => {
-            // Reverse effects
+            // Reverse effects on standard invoices
             const oldDiscount = existingReceipt.discountAmount || 0;
             for (let i = 0; i < existingReceipt.allocations.length; i++) {
                 const oldAlloc = existingReceipt.allocations[i];
@@ -487,6 +608,31 @@ const deleteReceipt = async (req, res) => {
                             paidAmount: revPaid,
                             balanceAmount: revBalance,
                             status: revBalance <= 0 ? 'PAID' : (revPaid > 0 ? 'PARTIAL' : 'UNPAID')
+                        }
+                    });
+                }
+            }
+
+            // Reverse effects on POS invoices
+            const oldPosTransactions = await tx.transaction.findMany({
+                where: {
+                    receiptId: parseInt(id),
+                    posInvoiceId: { not: null },
+                    voucherType: 'RECEIPT'
+                }
+            });
+
+            for (const t of oldPosTransactions) {
+                const posInvoice = await tx.posinvoice.findUnique({ where: { id: t.posInvoiceId } });
+                if (posInvoice) {
+                    const revPaid = Math.max(0, (posInvoice.paidAmount || 0) - t.amount);
+                    const revBalance = (posInvoice.totalAmount || 0) - revPaid;
+                    await tx.posinvoice.update({
+                        where: { id: t.posInvoiceId },
+                        data: {
+                            paidAmount: revPaid,
+                            balanceAmount: revBalance,
+                            status: revBalance <= 0 ? 'Paid' : (revPaid > 0 ? 'Partial' : 'Due')
                         }
                     });
                 }
@@ -605,11 +751,72 @@ const getReceipts = async (req, res) => {
             orderBy: { createdAt: 'desc' }
         });
 
-        // Map invoice for backwards compatibility
-        const mapped = receipts.map(r => ({
-            ...r,
-            invoice: r.allocations[0]?.invoice || null
-        }));
+        // Fetch POS allocations from transactions linked to these receipts
+        const receiptIds = receipts.map(r => r.id);
+        const posTransactions = receiptIds.length > 0 ? await prisma.transaction.findMany({
+            where: {
+                receiptId: { in: receiptIds },
+                posInvoiceId: { not: null },
+                voucherType: 'RECEIPT'
+            },
+            include: {
+                posinvoice: {
+                    select: {
+                        id: true,
+                        invoiceNumber: true,
+                        totalAmount: true,
+                        paidAmount: true,
+                        balanceAmount: true,
+                        date: true,
+                        status: true
+                    }
+                }
+            }
+        }) : [];
+
+        // Map and unify allocations
+        const mapped = receipts.map(r => {
+            const standardAllocs = r.allocations.map(a => ({
+                id: a.id,
+                receiptId: a.receiptId,
+                invoiceId: a.invoiceId,
+                invoiceType: 'TAX_INVOICE',
+                amount: a.amount,
+                companyId: a.companyId,
+                createdAt: a.createdAt,
+                updatedAt: a.updatedAt,
+                invoice: a.invoice
+            }));
+
+            const posAllocs = posTransactions
+                .filter(t => t.receiptId === r.id)
+                .map(t => ({
+                    id: t.id,
+                    receiptId: t.receiptId,
+                    invoiceId: t.posInvoiceId,
+                    invoiceType: 'POS_INVOICE',
+                    amount: t.amount,
+                    companyId: t.companyId,
+                    createdAt: t.createdAt,
+                    updatedAt: t.updatedAt,
+                    invoice: t.posinvoice ? {
+                        id: t.posinvoice.id,
+                        invoiceNumber: t.posinvoice.invoiceNumber,
+                        totalAmount: t.posinvoice.totalAmount,
+                        paidAmount: t.posinvoice.paidAmount,
+                        balanceAmount: t.posinvoice.balanceAmount,
+                        date: t.posinvoice.date,
+                        status: t.posinvoice.status
+                    } : null
+                }));
+
+            const combinedAllocs = [...standardAllocs, ...posAllocs];
+            return {
+                ...r,
+                allocations: combinedAllocs,
+                invoice: combinedAllocs[0]?.invoice || null
+            };
+        });
 
         res.status(200).json({ success: true, data: mapped });
     } catch (error) {
@@ -653,10 +860,65 @@ const getReceiptById = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Receipt not found' });
         }
 
-        // Map invoice for backwards compatibility
+        // Fetch POS allocations for this receipt
+        const posTransactions = await prisma.transaction.findMany({
+            where: {
+                receiptId: receipt.id,
+                posInvoiceId: { not: null },
+                voucherType: 'RECEIPT'
+            },
+            include: {
+                posinvoice: {
+                    select: {
+                        id: true,
+                        invoiceNumber: true,
+                        totalAmount: true,
+                        paidAmount: true,
+                        balanceAmount: true,
+                        date: true,
+                        status: true
+                    }
+                }
+            }
+        });
+
+        const standardAllocs = receipt.allocations.map(a => ({
+            id: a.id,
+            receiptId: a.receiptId,
+            invoiceId: a.invoiceId,
+            invoiceType: 'TAX_INVOICE',
+            amount: a.amount,
+            companyId: a.companyId,
+            createdAt: a.createdAt,
+            updatedAt: a.updatedAt,
+            invoice: a.invoice
+        }));
+
+        const posAllocs = posTransactions.map(t => ({
+            id: t.id,
+            receiptId: t.receiptId,
+            invoiceId: t.posInvoiceId,
+            invoiceType: 'POS_INVOICE',
+            amount: t.amount,
+            companyId: t.companyId,
+            createdAt: t.createdAt,
+            updatedAt: t.updatedAt,
+            invoice: t.posinvoice ? {
+                id: t.posinvoice.id,
+                invoiceNumber: t.posinvoice.invoiceNumber,
+                totalAmount: t.posinvoice.totalAmount,
+                paidAmount: t.posinvoice.paidAmount,
+                balanceAmount: t.posinvoice.balanceAmount,
+                date: t.posinvoice.date,
+                status: t.posinvoice.status
+            } : null
+        }));
+
+        const combinedAllocs = [...standardAllocs, ...posAllocs];
         const mapped = {
             ...receipt,
-            invoice: receipt.allocations[0]?.invoice || null
+            allocations: combinedAllocs,
+            invoice: combinedAllocs[0]?.invoice || null
         };
 
         res.status(200).json({ success: true, data: mapped });
