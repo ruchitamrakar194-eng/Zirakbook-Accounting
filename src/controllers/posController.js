@@ -1029,6 +1029,137 @@ const getNextNumber = async (req, res) => {
     }
 };
 
+const recordPOSPayment = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const {
+            amount,
+            paymentMode,
+            accountId,
+            referenceNumber,
+            date,
+            notes
+        } = req.body;
+
+        const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
+        if (!companyId) {
+            return res.status(400).json({ success: false, message: 'Company ID missing' });
+        }
+
+        const parsedAmount = parseFloat(amount);
+        if (isNaN(parsedAmount) || parsedAmount <= 0) {
+            return res.status(400).json({ success: false, message: 'Invalid payment amount' });
+        }
+
+        const result = await prisma.$transaction(async (tx) => {
+            const invoice = await tx.posinvoice.findUnique({
+                where: { id: parseInt(id) },
+                include: { transaction: true }
+            });
+
+            if (!invoice || invoice.companyId !== parseInt(companyId)) {
+                throw new Error('POS Invoice not found or unauthorized');
+            }
+
+            if (invoice.balanceAmount <= 0) {
+                throw new Error('This invoice is already fully paid');
+            }
+
+            const tolerance = 0.01;
+            if (parsedAmount > invoice.balanceAmount + tolerance) {
+                throw new Error(`Payment amount (${parsedAmount}) exceeds outstanding balance (${invoice.balanceAmount})`);
+            }
+
+            const saleTx = invoice.transaction.find(t => t.voucherType === 'POS_INVOICE');
+            let customerLedgerId = saleTx?.debitLedgerId;
+
+            if (!customerLedgerId) {
+                if (invoice.customerId) {
+                    const customer = await tx.customer.findUnique({ where: { id: invoice.customerId } });
+                    customerLedgerId = customer?.ledgerId;
+                }
+                if (!customerLedgerId) {
+                    let walkinLedger = await tx.ledger.findFirst({
+                        where: { companyId: parseInt(companyId), name: { contains: 'Walk-in' } }
+                    });
+                    if (!walkinLedger) {
+                        let assetGroup = await tx.accountgroup.findFirst({ where: { companyId: parseInt(companyId), type: 'ASSETS' } });
+                        if (!assetGroup) {
+                            assetGroup = await tx.accountgroup.create({
+                                data: { name: 'Current Assets', type: 'ASSETS', companyId: parseInt(companyId) }
+                            });
+                        }
+                        walkinLedger = await tx.ledger.create({
+                            data: { name: 'Walk-in Customer Ledger', groupId: assetGroup.id, companyId: parseInt(companyId) }
+                        });
+                    }
+                    customerLedgerId = walkinLedger.id;
+                }
+            }
+
+            let receiptLedgerId = accountId ? parseInt(accountId) : null;
+            if (!receiptLedgerId) {
+                const modeName = paymentMode === 'CASH' ? 'Cash' : 'Bank';
+                let fallbackLedger = await tx.ledger.findFirst({
+                    where: { companyId: parseInt(companyId), name: { contains: modeName }, accountgroup: { type: 'ASSETS' } }
+                });
+                if (!fallbackLedger) {
+                    const assetGroup = await tx.accountgroup.findFirst({ where: { companyId: parseInt(companyId), type: 'ASSETS' } });
+                    fallbackLedger = await tx.ledger.create({
+                        data: { name: `${modeName} Account`, groupId: assetGroup.id, companyId: parseInt(companyId) }
+                    });
+                }
+                receiptLedgerId = fallbackLedger.id;
+            }
+
+            await tx.transaction.create({
+                data: {
+                    date: date ? new Date(date) : new Date(),
+                    voucherType: 'RECEIPT',
+                    voucherNumber: referenceNumber || `RCP-${invoice.invoiceNumber}`,
+                    companyId: parseInt(companyId),
+                    debitLedgerId: receiptLedgerId,
+                    creditLedgerId: customerLedgerId,
+                    amount: parsedAmount,
+                    narration: notes || `Payment received for POS ${invoice.invoiceNumber} via ${paymentMode || 'CASH'}`,
+                    posInvoiceId: invoice.id,
+                    updatedAt: new Date()
+                }
+            });
+
+            await tx.ledger.update({ where: { id: receiptLedgerId }, data: { currentBalance: { increment: parsedAmount } } });
+            await tx.ledger.update({ where: { id: customerLedgerId }, data: { currentBalance: { decrement: parsedAmount } } });
+
+            const newPaidAmount = parseFloat((invoice.paidAmount + parsedAmount).toFixed(2));
+            const newBalanceAmount = parseFloat((invoice.totalAmount - newPaidAmount).toFixed(2));
+            const newStatus = newBalanceAmount <= tolerance ? 'Paid' : 'Partial';
+
+            const updatedInvoice = await tx.posinvoice.update({
+                where: { id: invoice.id },
+                data: {
+                    paidAmount: newPaidAmount,
+                    balanceAmount: newBalanceAmount,
+                    status: newStatus,
+                    updatedAt: new Date()
+                }
+            });
+
+            return updatedInvoice;
+        }, {
+            maxWait: 15000,
+            timeout: 90000
+        });
+
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'CREATE', 'POS', result.id, `Payment of ${parsedAmount} recorded for POS Invoice #${result.invoiceNumber}`);
+
+        res.status(200).json({ success: true, data: result });
+    } catch (error) {
+        console.error('Record POS Payment Error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 module.exports = {
     createPOSInvoice,
     getPOSInvoices,
@@ -1036,5 +1167,6 @@ module.exports = {
     deletePOSInvoice,
     getPublicPOSInvoiceById,
     updatePOSInvoice,
-    getNextNumber
+    getNextNumber,
+    recordPOSPayment
 };
