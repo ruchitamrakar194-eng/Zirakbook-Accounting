@@ -50,6 +50,7 @@ const userRoutes = require('./src/routes/userRoutes');
 const reportRoutes = require('./src/routes/reportRoutes');
 const uploadRoutes = require('./src/routes/uploadRoutes');
 const auditLogRoutes = require('./src/routes/auditLogRoutes');
+const searchRoutes = require('./src/routes/searchRoutes');
 
 const prisma = require('./src/config/prisma');
 
@@ -100,7 +101,7 @@ app.use(cors({
     ],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     credentials: true,
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept']
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'X-No-Loader']
 }));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
@@ -148,6 +149,7 @@ app.use('/api/users', userRoutes);
 app.use('/api/reports', reportRoutes);
 app.use('/api/upload', uploadRoutes);
 app.use('/api/audit-logs', auditLogRoutes);
+app.use('/api/search', searchRoutes);
 
 // Health Check
 app.get('/', (req, res) => {

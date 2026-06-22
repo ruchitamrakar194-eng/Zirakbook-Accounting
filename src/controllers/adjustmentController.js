@@ -130,7 +130,8 @@ const createAdjustment = async (req, res) => {
                             quantity: qty,
                             type: 'ADJUSTMENT',
                             reason: `Adjustment (Add): ${resolvedVoucherNo}. ${item.narration || ''}`,
-                            companyId: parseInt(companyId)
+                            companyId: parseInt(companyId),
+                            userId: req.user?.userId || null
                         }
                     });
                 } else if (type === 'REMOVE_STOCK') {
@@ -154,7 +155,8 @@ const createAdjustment = async (req, res) => {
                             quantity: qty,
                             type: 'ADJUSTMENT',
                             reason: `Adjustment (Remove): ${resolvedVoucherNo}. ${item.narration || ''}`,
-                            companyId: parseInt(companyId)
+                            companyId: parseInt(companyId),
+                            userId: req.user?.userId || null
                         }
                     });
                 }
@@ -414,7 +416,8 @@ const updateAdjustment = async (req, res) => {
                             quantity: qty,
                             type: 'ADJUSTMENT',
                             reason: `Adjustment (Add-Updated): ${voucherNo}. ${item.narration || ''}`,
-                            companyId: parseInt(companyId)
+                            companyId: parseInt(companyId),
+                            userId: req.user?.userId || null
                         }
                     });
                 } else if (type === 'REMOVE_STOCK') {
@@ -429,7 +432,8 @@ const updateAdjustment = async (req, res) => {
                             quantity: qty,
                             type: 'ADJUSTMENT',
                             reason: `Adjustment (Remove-Updated): ${voucherNo}. ${item.narration || ''}`,
-                            companyId: parseInt(companyId)
+                            companyId: parseInt(companyId),
+                            userId: req.user?.userId || null
                         }
                     });
                 }

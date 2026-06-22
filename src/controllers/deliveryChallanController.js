@@ -124,7 +124,8 @@ const createChallan = async (req, res) => {
                                 fromWarehouseId: item.warehouseId,
                                 quantity: item.quantity,
                                 reason: `Challan Issue: ${challanNumber}`,
-                                companyId: parseInt(companyId)
+                                companyId: parseInt(companyId),
+                                userId: req.user?.userId || null
                             }
                         });
                     } else if (action === 'RESERVE') {

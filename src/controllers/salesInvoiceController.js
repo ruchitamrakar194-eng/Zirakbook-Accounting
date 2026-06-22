@@ -303,7 +303,8 @@ const createInvoice = async (req, res) => {
                                         fromWarehouseId: item.warehouseId,
                                         quantity: baseQty,
                                         reason: `Invoice from Reserved Challan: ${invoiceNumber}`,
-                                        companyId: parseInt(companyId)
+                                        companyId: parseInt(companyId),
+                                        userId: req.user?.userId || null
                                     }
                                 });
                             }
@@ -373,7 +374,8 @@ const createInvoice = async (req, res) => {
                                     fromWarehouseId: item.warehouseId,
                                     quantity: baseQty,
                                     reason: `Invoice from SO: ${invoiceNumber}`,
-                                    companyId: parseInt(companyId)
+                                    companyId: parseInt(companyId),
+                                    userId: req.user?.userId || null
                                 }
                             });
                         }
@@ -411,6 +413,7 @@ const createInvoice = async (req, res) => {
                                 fromWarehouseId: item.warehouseId,
                                 companyId: parseInt(companyId),
                                 quantity: baseQty,
+                                userId: req.user?.userId || null,
                                 reason: `Direct Invoice: ${invoiceNumber}`
                             }
                         });
@@ -986,14 +989,25 @@ const updateInvoice = async (req, res) => {
             });
 
             for (const t of oldTransactions) {
-                await tx.ledger.update({
-                    where: { id: t.debitLedgerId },
-                    data: { currentBalance: { decrement: t.amount } }
-                });
-                await tx.ledger.update({
-                    where: { id: t.creditLedgerId },
-                    data: { currentBalance: { decrement: t.amount } }
-                });
+                if (t.voucherNumber && t.voucherNumber.startsWith('COGS-')) {
+                    await tx.ledger.update({
+                        where: { id: t.debitLedgerId },
+                        data: { currentBalance: { decrement: t.amount } }
+                    });
+                    await tx.ledger.update({
+                        where: { id: t.creditLedgerId },
+                        data: { currentBalance: { increment: t.amount } }
+                    });
+                } else {
+                    await tx.ledger.update({
+                        where: { id: t.debitLedgerId },
+                        data: { currentBalance: { decrement: t.amount } }
+                    });
+                    await tx.ledger.update({
+                        where: { id: t.creditLedgerId },
+                        data: { currentBalance: { decrement: t.amount } }
+                    });
+                }
             }
 
             // B. Revert old stock + FIFO/WAC if items changed
@@ -1446,14 +1460,25 @@ const deleteInvoice = async (req, res) => {
 
             // 1. Revert Ledger Balances
             for (const t of invoice.transaction) {
-                await tx.ledger.update({
-                    where: { id: t.debitLedgerId },
-                    data: { currentBalance: { decrement: t.amount } }
-                });
-                await tx.ledger.update({
-                    where: { id: t.creditLedgerId },
-                    data: { currentBalance: { decrement: t.amount } }
-                });
+                if (t.voucherNumber && t.voucherNumber.startsWith('COGS-')) {
+                    await tx.ledger.update({
+                        where: { id: t.debitLedgerId },
+                        data: { currentBalance: { decrement: t.amount } }
+                    });
+                    await tx.ledger.update({
+                        where: { id: t.creditLedgerId },
+                        data: { currentBalance: { increment: t.amount } }
+                    });
+                } else {
+                    await tx.ledger.update({
+                        where: { id: t.debitLedgerId },
+                        data: { currentBalance: { decrement: t.amount } }
+                    });
+                    await tx.ledger.update({
+                        where: { id: t.creditLedgerId },
+                        data: { currentBalance: { decrement: t.amount } }
+                    });
+                }
             }
 
             // 2. Revert Stock & Valuation Layers
@@ -1488,18 +1513,6 @@ const deleteInvoice = async (req, res) => {
                             quantity: { increment: baseQty }
                         }
                     });
-
-                    // Log inventory return
-                    await tx.inventorytransaction.create({
-                        data: {
-                            type: 'RETURN',
-                            productId: item.productId,
-                            toWarehouseId: item.warehouseId,
-                            quantity: baseQty,
-                            reason: `Invoice Deleted: ${invoice.invoiceNumber}`,
-                            companyId: invoice.companyId
-                        }
-                    });
                 }
             }
 
@@ -1507,6 +1520,14 @@ const deleteInvoice = async (req, res) => {
             await reverseStockOut(tx, {
                 invoiceId: invoice.id,
                 invoiceItems: baseItemsForReversal
+            });
+
+            // Delete original inventory transactions matching this invoice
+            await tx.inventorytransaction.deleteMany({
+                where: {
+                    companyId: invoice.companyId,
+                    reason: { contains: invoice.invoiceNumber }
+                }
             });
 
             // 3. Delete Transactions, Journal Entries, and Invoice

@@ -229,6 +229,7 @@ const createPOSInvoice = async (req, res) => {
                         quantity: baseQty,
                         reason: `POS Sale: ${invoiceNumber}`,
                         companyId: parseInt(currentCompanyId),
+                        userId: req.user?.userId || null,
                         updatedAt: new Date()
                     }
                 });
@@ -476,19 +477,13 @@ const deletePOSInvoice = async (req, res) => {
             // 1. Reverse Accounting
             // Loop transactions and reverse balances
             for (const t of invoice.transaction) {
-                // Reverse Debit
-                await tx.ledger.update({ where: { id: t.debitLedgerId }, data: { currentBalance: { decrement: t.amount } } });
-                // Reverse Credit
-                await tx.ledger.update({ where: { id: t.creditLedgerId }, data: { currentBalance: { decrement: t.amount } } }); // Wait, Credit Increase = Credit. Decrementing reverses Increase?
-                // Standard: Cr Income increases balance (Credit Balance).
-                // Logic: 
-                // If Asset (Debit Normal): Debit increases (+), Credit decreases (-).
-                // If Income (Credit Normal): Credit increases (+), Debit decreases (-).
-
-                // My logic used in create:
-                // update({ currentBalance: { increment: amount } }) for Debit Ledger (usually Asset/Expense - Debit Balance) -> Correct.
-                // update({ currentBalance: { increment: amount } }) for Credit Ledger (Income - Credit Balance) -> Correct.
-                // So "decrement" reverses both. Correct.
+                if (t.voucherNumber && t.voucherNumber.startsWith('COGS-')) {
+                    await tx.ledger.update({ where: { id: t.debitLedgerId }, data: { currentBalance: { decrement: t.amount } } });
+                    await tx.ledger.update({ where: { id: t.creditLedgerId }, data: { currentBalance: { increment: t.amount } } });
+                } else {
+                    await tx.ledger.update({ where: { id: t.debitLedgerId }, data: { currentBalance: { decrement: t.amount } } });
+                    await tx.ledger.update({ where: { id: t.creditLedgerId }, data: { currentBalance: { decrement: t.amount } } });
+                }
 
                 await tx.transaction.delete({ where: { id: t.id } });
             }
@@ -509,19 +504,6 @@ const deletePOSInvoice = async (req, res) => {
                     await tx.stock.update({
                         where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
                         data: { quantity: { increment: baseQty } }
-                    });
-
-                    // Log return transaction
-                    await tx.inventorytransaction.create({
-                        data: {
-                            date: new Date(),
-                            type: 'RETURN', // Internal Return
-                            productId: item.productId,
-                            toWarehouseId: item.warehouseId,
-                            quantity: baseQty,
-                            reason: `Void POS: ${invoice.invoiceNumber}`,
-                            companyId: parseInt(companyId || invoice.companyId)
-                        }
                     });
 
                     // Restore WAC inventory tracking
@@ -548,6 +530,14 @@ const deletePOSInvoice = async (req, res) => {
                     }
                 }
             }
+
+            // Delete original inventory transactions matching this POS invoice
+            await tx.inventorytransaction.deleteMany({
+                where: {
+                    companyId: parseInt(companyId || invoice.companyId),
+                    reason: { contains: invoice.invoiceNumber }
+                }
+            });
 
             // 3. Delete Invoice
             await tx.posinvoice.delete({ where: { id: parseInt(id) } });
@@ -676,8 +666,13 @@ const updatePOSInvoice = async (req, res) => {
 
             // B. Reverse Old Accounting Entries (Loop and reverse balances)
             for (const t of existingInvoice.transaction) {
-                await tx.ledger.update({ where: { id: t.debitLedgerId }, data: { currentBalance: { decrement: t.amount } } });
-                await tx.ledger.update({ where: { id: t.creditLedgerId }, data: { currentBalance: { decrement: t.amount } } });
+                if (t.voucherNumber && t.voucherNumber.startsWith('COGS-')) {
+                    await tx.ledger.update({ where: { id: t.debitLedgerId }, data: { currentBalance: { decrement: t.amount } } });
+                    await tx.ledger.update({ where: { id: t.creditLedgerId }, data: { currentBalance: { increment: t.amount } } });
+                } else {
+                    await tx.ledger.update({ where: { id: t.debitLedgerId }, data: { currentBalance: { decrement: t.amount } } });
+                    await tx.ledger.update({ where: { id: t.creditLedgerId }, data: { currentBalance: { decrement: t.amount } } });
+                }
                 await tx.transaction.delete({ where: { id: t.id } });
             }
 
@@ -708,7 +703,8 @@ const updatePOSInvoice = async (req, res) => {
                             toWarehouseId: item.warehouseId,
                             quantity: baseQty,
                             reason: `Void Items on Update POS: ${existingInvoice.invoiceNumber}`,
-                            companyId: parseInt(currentCompanyId)
+                            companyId: parseInt(currentCompanyId),
+                            userId: req.user?.userId || null
                         }
                     });
 
@@ -869,6 +865,7 @@ const updatePOSInvoice = async (req, res) => {
                         quantity: baseQty,
                         reason: `POS Sale Update: ${existingInvoice.invoiceNumber}`,
                         companyId: parseInt(currentCompanyId),
+                        userId: req.user?.userId || null,
                         updatedAt: new Date()
                     }
                 });

@@ -150,7 +150,8 @@ const createStockTransfer = async (req, res) => {
                         toWarehouseId: toWH,
                         quantity: qty,
                         reason: `Voucher: ${resolvedVoucherNo}. ${item.narration || ''}`,
-                        companyId: parseInt(companyId)
+                        companyId: parseInt(companyId),
+                        userId: req.user?.userId || null
                     }
                 });
             }
@@ -202,6 +203,14 @@ const deleteStockTransfer = async (req, res) => {
                     data: { quantity: { decrement: item.quantity } }
                 });
             }
+
+            // Delete associated inventory transactions
+            await tx.inventorytransaction.deleteMany({
+                where: {
+                    companyId: parseInt(companyId),
+                    reason: { startsWith: `Voucher: ${transfer.voucherNo}` }
+                }
+            });
 
             await tx.stocktransfer.delete({ where: { id: parseInt(id) } });
         }, { timeout: 30000 });
@@ -325,7 +334,8 @@ const updateStockTransfer = async (req, res) => {
                         toWarehouseId: toWH,
                         quantity: qty,
                         reason: `Voucher: ${oldTransfer.voucherNo} (Updated). ${item.narration || ''}`,
-                        companyId: parseInt(companyId)
+                        companyId: parseInt(companyId),
+                        userId: req.user?.userId || null
                     }
                 });
             }

@@ -115,7 +115,8 @@ const createReturn = async (req, res) => {
                         toWarehouseId: item.warehouseId,
                         quantity: item.quantity,
                         reason: `Sales Return: ${returnNumber}`,
-                        companyId: parseInt(companyId)
+                        companyId: parseInt(companyId),
+                        userId: req.user?.userId || null
                     }
                 });
             }
@@ -436,6 +437,30 @@ const deleteReturn = async (req, res) => {
                         data: { currentBalance: { increment: salesReturn.totalAmount } }
                     });
                 }
+            }
+
+            // Reverse COGS Reversal entries if they exist
+            const cogsRevTrans = await tx.transaction.findFirst({
+                where: {
+                    companyId: parseInt(companyId),
+                    voucherNumber: `COGS-REV-${salesReturn.autoVoucherNo}`,
+                    voucherType: 'JOURNAL'
+                }
+            });
+
+            if (cogsRevTrans) {
+                await tx.ledger.update({
+                    where: { id: cogsRevTrans.debitLedgerId },
+                    data: { currentBalance: { decrement: cogsRevTrans.amount } }
+                });
+                await tx.ledger.update({
+                    where: { id: cogsRevTrans.creditLedgerId },
+                    data: { currentBalance: { increment: cogsRevTrans.amount } }
+                });
+
+                await tx.transaction.delete({
+                    where: { id: cogsRevTrans.id }
+                });
             }
 
             // 4. Delete Transactions and Sales Return

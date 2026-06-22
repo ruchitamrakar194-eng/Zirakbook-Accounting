@@ -131,6 +131,7 @@ const createProduct = async (req, res) => {
                     toWarehouseId: parseInt(w.warehouseId),
                     quantity: w.quantity ? parseFloat(w.quantity) : parseFloat(w.initialQty),
                     companyId: parseInt(companyId),
+                    userId: req.user?.userId || null,
                     reason: 'Opening Stock'
                 }));
 
@@ -655,7 +656,8 @@ const getProductById = async (req, res) => {
                 inventorytransaction: {
                     include: {
                         warehouse_inventorytransaction_fromWarehouseIdTowarehouse: { select: { name: true } },
-                        warehouse_inventorytransaction_toWarehouseIdTowarehouse: { select: { name: true } }
+                        warehouse_inventorytransaction_toWarehouseIdTowarehouse: { select: { name: true } },
+                        user: { select: { id: true, name: true, email: true } }
                     },
                     orderBy: { date: 'desc' }
                 }

@@ -64,6 +64,7 @@ const createReturn = async (req, res) => {
                         fromWarehouseId: item.warehouseId,
                         quantity: item.quantity,
                         companyId: parseInt(companyId),
+                        userId: req.user?.userId || null,
                         reason: `Purchase Return: ${returnNumber}`
                     }
                 });
@@ -345,6 +346,14 @@ const deleteReturn = async (req, res) => {
                     where: { id: { in: journalEntryIds } }
                 });
             }
+
+            // Delete associated inventory transactions
+            await tx.inventorytransaction.deleteMany({
+                where: {
+                    companyId: parseInt(companyId),
+                    reason: `Purchase Return: ${purchaseReturn.returnNumber}`
+                }
+            });
 
             // 4. Delete Return items and document
             await tx.purchasereturnitem.deleteMany({ where: { purchaseReturnId: purchaseReturn.id } });

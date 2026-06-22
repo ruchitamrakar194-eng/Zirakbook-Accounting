@@ -422,17 +422,20 @@ model inventorytransaction {
   quantity                                                  Float
   reason                                                    String?                   @db.Text
   companyId                                                 Int
+  userId                                                    Int?
   createdAt                                                 DateTime                  @default(now())
   updatedAt                                                 DateTime                  @default(now()) @updatedAt
   company                                                   company                   @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "InventoryTransaction_companyId_fkey")
   warehouse_inventorytransaction_fromWarehouseIdTowarehouse warehouse?                @relation("inventorytransaction_fromWarehouseIdTowarehouse", fields: [fromWarehouseId], references: [id], map: "InventoryTransaction_fromWarehouseId_fkey")
   product                                                   product                   @relation(fields: [productId], references: [id], onDelete: Cascade, map: "InventoryTransaction_productId_fkey")
   warehouse_inventorytransaction_toWarehouseIdTowarehouse   warehouse?                @relation("inventorytransaction_toWarehouseIdTowarehouse", fields: [toWarehouseId], references: [id], map: "InventoryTransaction_toWarehouseId_fkey")
+  user                                                      user?                     @relation(fields: [userId], references: [id], onDelete: SetNull, map: "InventoryTransaction_userId_fkey")
 
   @@index([companyId], map: "InventoryTransaction_companyId_fkey")
   @@index([fromWarehouseId], map: "InventoryTransaction_fromWarehouseId_fkey")
   @@index([productId], map: "InventoryTransaction_productId_fkey")
   @@index([toWarehouseId], map: "InventoryTransaction_toWarehouseId_fkey")
+  @@index([userId], map: "InventoryTransaction_userId_fkey")
 }
 
 model invoice {
@@ -1369,20 +1372,21 @@ model uom {
 }
 
 model user {
-  id              Int               @id @default(autoincrement())
-  name            String
-  email           String            @unique(map: "User_email_key")
-  password        String
-  role            String            @default("USER")
-  roleId          Int?
-  loginEnabled    Boolean           @default(true)
-  companyId       Int?
-  avatar          String?           @db.LongText
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @default(now()) @updatedAt
-  passwordrequest passwordrequest[]
-  company         company?          @relation(fields: [companyId], references: [id], map: "User_companyId_fkey")
-  auditlog        auditlog[]
+  id                   Int                    @id @default(autoincrement())
+  name                 String
+  email                String                 @unique(map: "User_email_key")
+  password             String
+  role                 String                 @default("USER")
+  roleId               Int?
+  loginEnabled         Boolean                @default(true)
+  companyId            Int?
+  avatar               String?                @db.LongText
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @default(now()) @updatedAt
+  passwordrequest      passwordrequest[]
+  company              company?               @relation(fields: [companyId], references: [id], map: "User_companyId_fkey")
+  auditlog             auditlog[]
+  inventorytransaction inventorytransaction[]
 
   @@index([companyId], map: "User_companyId_fkey")
 }

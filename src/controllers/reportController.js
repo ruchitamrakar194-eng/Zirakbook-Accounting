@@ -112,12 +112,28 @@ const getSalesReport = async (req, res) => {
                 date: 'desc'
             }
         });
-        // Calculate Summary Stats
+        // Calculate Summary Stats & Convert to Base Currency
         const now = new Date();
-        const summary = salesReport.reduce((acc, inv) => {
+        const convertedSalesReport = salesReport.map(inv => {
+            const rate = inv.exchangeRate || 1.0;
+            return {
+                ...inv,
+                subtotal: inv.subtotal * rate,
+                discountAmount: inv.discountAmount * rate,
+                taxAmount: inv.taxAmount * rate,
+                totalAmount: inv.totalAmount * rate,
+                paidAmount: inv.paidAmount * rate,
+                balanceAmount: inv.balanceAmount * rate,
+                invoiceitem: inv.invoiceitem.map(item => ({
+                    ...item,
+                    rate: item.rate * rate,
+                    amount: item.amount * rate
+                }))
+            };
+        });
+
+        const summary = convertedSalesReport.reduce((acc, inv) => {
             const total = inv.totalAmount || 0;
-            // Assuming balanceAmount tracks unpaid amount. 
-            // If invoice is fully paid, balance is 0.
             const unpaid = inv.balanceAmount || 0;
             const paid = total - unpaid;
 
@@ -125,7 +141,6 @@ const getSalesReport = async (req, res) => {
             acc.totalPaid += paid;
             acc.totalUnpaid += unpaid;
 
-            // Overdue check: if dueDate exists, is past today, and still has unpaid balance
             if (inv.dueDate && new Date(inv.dueDate) < now && unpaid > 0) {
                 acc.overdue += unpaid;
             }
@@ -138,7 +153,7 @@ const getSalesReport = async (req, res) => {
             overdue: 0
         });
 
-        res.status(200).json({ success: true, data: salesReport, summary });
+        res.status(200).json({ success: true, data: convertedSalesReport, summary });
 
     } catch (error) {
         console.error('Error fetching sales report:', error);
@@ -167,13 +182,14 @@ const getSalesByItemReport = async (req, res) => {
             },
             include: {
                 product: { include: { category: true } },
-                invoice: { select: { date: true, invoiceNumber: true } }
+                invoice: { select: { date: true, invoiceNumber: true, exchangeRate: true } }
             }
         });
 
         const grouped = invoiceItems.reduce((acc, item) => {
             const productId = item.productId || 'service-' + (item.serviceId || 'unknown');
             const productName = item.product?.name || item.description || 'Unknown';
+            const rate = item.invoice?.exchangeRate || 1.0;
 
             if (!acc[productId]) {
                 acc[productId] = {
@@ -189,7 +205,7 @@ const getSalesByItemReport = async (req, res) => {
             }
             acc[productId].invoiceIds.add(item.invoiceId);
             acc[productId].totalQty += item.quantity;
-            acc[productId].totalAmount += item.amount;
+            acc[productId].totalAmount += item.amount * rate;
             return acc;
         }, {});
 
@@ -235,6 +251,7 @@ const getSalesByCustomerReport = async (req, res) => {
         const grouped = allInvoices.reduce((acc, inv) => {
             const customerId = inv.customerId || 'walk-in';
             const customerName = inv.customer?.name || 'Walk-in Customer';
+            const rate = inv.exchangeRate || 1.0;
 
             if (!acc[customerId]) {
                 acc[customerId] = {
@@ -247,9 +264,9 @@ const getSalesByCustomerReport = async (req, res) => {
                 };
             }
             acc[customerId].totalInvoices += 1;
-            acc[customerId].totalSales += inv.totalAmount;
-            acc[customerId].totalPaid += inv.paidAmount || 0;
-            acc[customerId].totalPending += inv.balanceAmount || 0;
+            acc[customerId].totalSales += inv.totalAmount * rate;
+            acc[customerId].totalPaid += (inv.paidAmount || 0) * rate;
+            acc[customerId].totalPending += (inv.balanceAmount || 0) * rate;
             return acc;
         }, {});
 
@@ -283,13 +300,14 @@ const getSalesBySalesmanReport = async (req, res) => {
             // Note: salesman tracking requires a 'createdBy' field on the invoice model.
             // Not currently in schema — grouped under 'Administrator' until field is added.
             const salesman = 'Administrator';
+            const rate = inv.exchangeRate || 1.0;
             if (!acc[salesman]) {
                 acc[salesman] = { salesman, totalInvoices: 0, totalSales: 0, totalPaid: 0, totalPending: 0 };
             }
             acc[salesman].totalInvoices += 1;
-            acc[salesman].totalSales += inv.totalAmount;
-            acc[salesman].totalPaid += inv.paidAmount || 0;
-            acc[salesman].totalPending += inv.balanceAmount || 0;
+            acc[salesman].totalSales += inv.totalAmount * rate;
+            acc[salesman].totalPaid += (inv.paidAmount || 0) * rate;
+            acc[salesman].totalPending += (inv.balanceAmount || 0) * rate;
             return acc;
         }, {});
 
@@ -346,9 +364,28 @@ const getPurchaseReport = async (req, res) => {
             }
         });
 
+        // Convert to Base Currency
+        const convertedPurchaseReport = purchaseReport.map(bill => {
+            const rate = bill.exchangeRate || 1.0;
+            return {
+                ...bill,
+                subtotal: (bill.subtotal || 0) * rate,
+                discountAmount: (bill.discountAmount || 0) * rate,
+                taxAmount: (bill.taxAmount || 0) * rate,
+                totalAmount: (bill.totalAmount || 0) * rate,
+                paidAmount: ((bill.totalAmount || 0) - (bill.balanceAmount || 0)) * rate,
+                balanceAmount: (bill.balanceAmount || 0) * rate,
+                purchasebillitem: bill.purchasebillitem.map(item => ({
+                    ...item,
+                    rate: (item.rate || 0) * rate,
+                    amount: (item.amount || 0) * rate
+                }))
+            };
+        });
+
         // Calculate Summary Stats
         const now = new Date();
-        const summary = purchaseReport.reduce((acc, bill) => {
+        const summary = convertedPurchaseReport.reduce((acc, bill) => {
             const total = bill.totalAmount || 0;
             const unpaid = bill.balanceAmount || 0;
             const paid = total - unpaid;
@@ -369,7 +406,7 @@ const getPurchaseReport = async (req, res) => {
             overdue: 0
         });
 
-        res.status(200).json({ success: true, data: purchaseReport, summary });
+        res.status(200).json({ success: true, data: convertedPurchaseReport, summary });
     } catch (error) {
         console.error('Error fetching purchase report:', error);
         res.status(500).json({ success: false, message: 'Internal Server Error' });
@@ -397,13 +434,14 @@ const getPurchaseByItemReport = async (req, res) => {
             },
             include: {
                 product: { include: { category: true } },
-                purchasebill: { select: { date: true, billNumber: true } }
+                purchasebill: { select: { date: true, billNumber: true, exchangeRate: true } }
             }
         });
 
         const grouped = billItems.reduce((acc, item) => {
             const productId = item.productId || 'unknown';
             const productName = item.product?.name || item.description || 'Unknown';
+            const rate = item.purchasebill?.exchangeRate || 1.0;
 
             if (!acc[productId]) {
                 acc[productId] = {
@@ -419,7 +457,7 @@ const getPurchaseByItemReport = async (req, res) => {
             }
             acc[productId].billIds.add(item.purchaseBillId);
             acc[productId].totalQty += item.quantity;
-            acc[productId].totalAmount += item.amount;
+            acc[productId].totalAmount += item.amount * rate;
             return acc;
         }, {});
 
@@ -458,6 +496,7 @@ const getPurchaseByVendorReport = async (req, res) => {
         const grouped = bills.reduce((acc, bill) => {
             const vendorId = bill.vendorId || 'unknown';
             const vendorName = bill.vendor?.name || 'Unknown Vendor';
+            const rate = bill.exchangeRate || 1.0;
 
             if (!acc[vendorId]) {
                 acc[vendorId] = {
@@ -470,9 +509,9 @@ const getPurchaseByVendorReport = async (req, res) => {
                 };
             }
             acc[vendorId].totalBills += 1;
-            acc[vendorId].totalPurchases += bill.totalAmount;
-            acc[vendorId].totalPaid += (bill.totalAmount - bill.balanceAmount);
-            acc[vendorId].totalPending += bill.balanceAmount;
+            acc[vendorId].totalPurchases += bill.totalAmount * rate;
+            acc[vendorId].totalPaid += (bill.totalAmount - bill.balanceAmount) * rate;
+            acc[vendorId].totalPending += bill.balanceAmount * rate;
             return acc;
         }, {});
 
@@ -1237,8 +1276,9 @@ const getVatReport = async (req, res) => {
 
         // Map Invoices
         invoices.forEach(inv => {
-            const taxable = parseFloat(inv.subtotal) || 0;
-            const tax = parseFloat(inv.taxAmount) || 0;
+            const exRate = inv.exchangeRate || 1.0;
+            const taxable = (parseFloat(inv.subtotal) || 0) * exRate;
+            const tax = (parseFloat(inv.taxAmount) || 0) * exRate;
             const rate = taxable > 0 ? ((tax / taxable) * 100).toFixed(1) : 0;
 
             reportData.push({
@@ -1272,8 +1312,9 @@ const getVatReport = async (req, res) => {
 
         // Map Bills
         bills.forEach(bill => {
-            const taxable = parseFloat(bill.subtotal) || 0;
-            const tax = parseFloat(bill.taxAmount) || 0;
+            const exRate = bill.exchangeRate || 1.0;
+            const taxable = (parseFloat(bill.subtotal) || 0) * exRate;
+            const tax = (parseFloat(bill.taxAmount) || 0) * exRate;
             const rate = taxable > 0 ? ((tax / taxable) * 100).toFixed(1) : 0;
 
             reportData.push({
@@ -1346,7 +1387,7 @@ const getDayBook = async (req, res) => {
                 voucherNo: inv.invoiceNumber,
                 ledger: inv.customer?.name || 'Unknown',
                 description: inv.notes || 'Sales Invoice',
-                debit: inv.totalAmount,
+                debit: inv.totalAmount * (inv.exchangeRate || 1.0),
                 credit: 0,
                 source: { type: 'SALES', id: inv.id, link: `/company/sales/invoice/view/${inv.id}` }
             }))));
@@ -1391,7 +1432,7 @@ const getDayBook = async (req, res) => {
                 ledger: bill.vendor?.name || 'Unknown',
                 description: bill.notes || 'Purchase Bill',
                 debit: 0,
-                credit: bill.totalAmount,
+                credit: bill.totalAmount * (bill.exchangeRate || 1.0),
                 source: { type: 'PURCHASE', id: bill.id, link: `/company/purchase/bill/view/${bill.id}` }
             }))));
         }

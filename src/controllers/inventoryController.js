@@ -69,7 +69,8 @@ const transferStock = async (req, res) => {
                     toWarehouseId: parseInt(toWarehouseId),
                     quantity: parseFloat(quantity),
                     reason: description || 'Stock Transfer',
-                    companyId: parseInt(companyId)
+                    companyId: parseInt(companyId),
+                    userId: req.user?.userId || null
                 }
             });
         });
@@ -146,7 +147,8 @@ const adjustStock = async (req, res) => {
                     fromWarehouseId: type === 'REMOVE' ? parseInt(warehouseId) : null,
                     quantity: qty, // Log the absolute amount
                     reason: reason || `${type} Adjustment`,
-                    companyId: parseInt(companyId)
+                    companyId: parseInt(companyId),
+                    userId: req.user?.userId || null
                 }
             });
         });

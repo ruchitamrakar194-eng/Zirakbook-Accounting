@@ -358,7 +358,8 @@ const createBill = async (req, res) => {
                                     toWarehouseId: item.warehouseId,
                                     quantity: baseQty,
                                     reason: `Direct Purchase Bill: ${billNumber}`,
-                                    companyId: parseInt(companyId)
+                                    companyId: parseInt(companyId),
+                                    userId: req.user?.userId || null
                                 }
                             });
 
@@ -723,19 +724,6 @@ const deleteBill = async (req, res) => {
                                 quantity: { decrement: baseQty }
                             }
                         });
-
-                        // Log inventory transaction for return/reversal
-                        await tx.inventorytransaction.create({
-                            data: {
-                                date: new Date(),
-                                type: 'RETURN',
-                                productId: item.productId,
-                                fromWarehouseId: item.warehouseId,
-                                quantity: baseQty,
-                                reason: `Purchase Bill Deleted: ${bill.billNumber}`,
-                                companyId: parseInt(companyId)
-                            }
-                        });
                     }
                 }
 
@@ -752,6 +740,14 @@ const deleteBill = async (req, res) => {
                         };
                     }),
                     method: valuationMethod
+                });
+
+                // Delete original inventory transactions matching this bill
+                await tx.inventorytransaction.deleteMany({
+                    where: {
+                        companyId: parseInt(companyId),
+                        reason: { contains: bill.billNumber }
+                    }
                 });
             }
 
@@ -910,7 +906,8 @@ const updateBill = async (req, res) => {
                                 fromWarehouseId: item.warehouseId,
                                 quantity: baseQty,
                                 reason: `Purchase Bill Edited (Stock Reversal): ${oldBill.billNumber}`,
-                                companyId: parseInt(companyId)
+                                companyId: parseInt(companyId),
+                                userId: req.user?.userId || null
                             }
                         });
                     }
@@ -1178,7 +1175,8 @@ const updateBill = async (req, res) => {
                                 toWarehouseId: item.warehouseId,
                                 quantity: baseQty,
                                 reason: `Direct Purchase Bill (Edited): ${targetBillNumber}`,
-                                companyId: parseInt(companyId)
+                                companyId: parseInt(companyId),
+                                userId: req.user?.userId || null
                             }
                         });
 

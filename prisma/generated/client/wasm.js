@@ -401,6 +401,7 @@ exports.Prisma.InventorytransactionScalarFieldEnum = {
   quantity: 'quantity',
   reason: 'reason',
   companyId: 'companyId',
+  userId: 'userId',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
 };

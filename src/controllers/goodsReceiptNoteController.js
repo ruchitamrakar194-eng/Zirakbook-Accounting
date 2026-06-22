@@ -62,6 +62,7 @@ const createGRN = async (req, res) => {
                         toWarehouseId: item.warehouseId,
                         quantity: item.quantity,
                         companyId: parseInt(companyId),
+                        userId: req.user?.userId || null,
                         reason: `GRN: ${grnNumber}`
                     }
                 });
