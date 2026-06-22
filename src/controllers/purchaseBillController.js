@@ -296,23 +296,24 @@ const createBill = async (req, res) => {
             const ledgerDiscountAmount = totalDiscount * docExchangeRate;
             const ledgerTotalAmount = totalAmountValue * docExchangeRate;
 
-            // Entry for Products (Debit Inventory)
-            if (totalProductGross > 0 && inventoryLedger) {
+            // Entry for Products (Debit Purchases)
+            const finalProductLedger = purchaseLedger || inventoryLedger;
+            if (totalProductGross > 0 && finalProductLedger) {
                 await tx.transaction.create({
                     data: {
                         date: new Date(date),
                         amount: ledgerProductAmount,
-                        debitLedgerId: inventoryLedger.id,
+                        debitLedgerId: finalProductLedger.id,
                         creditLedgerId: creditLedgerId,
                         voucherType: 'PURCHASE',
                         voucherNumber: billNumber,
                         companyId: parseInt(companyId),
                         journalEntryId: journalEntry.id,
                         purchaseBillId: bill.id,
-                        narration: 'Product Inventory Purchase'
+                        narration: 'Product Purchases'
                     }
                 });
-                await tx.ledger.update({ where: { id: inventoryLedger.id }, data: { currentBalance: { increment: ledgerProductAmount } } });
+                await tx.ledger.update({ where: { id: finalProductLedger.id }, data: { currentBalance: { increment: ledgerProductAmount } } });
                 await tx.ledger.update({ where: { id: creditLedgerId }, data: { currentBalance: { increment: ledgerProductAmount } } });
 
                 // Update Physical Stock AND Inventory Valuation Layers
@@ -1204,22 +1205,23 @@ const updateBill = async (req, res) => {
             const ledgerDiscountAmount = totalDiscount * docExchangeRate;
             const ledgerTotalAmount = totalAmountValue * docExchangeRate;
 
-            if (totalProductGross > 0 && inventoryLedger) {
+            const finalProductLedger = purchaseLedger || inventoryLedger;
+            if (totalProductGross > 0 && finalProductLedger) {
                 await tx.transaction.create({
                     data: {
                         date: targetDate,
                         amount: ledgerProductAmount,
-                        debitLedgerId: inventoryLedger.id,
+                        debitLedgerId: finalProductLedger.id,
                         creditLedgerId: newVendorLedgerId,
                         voucherType: 'PURCHASE',
                         voucherNumber: targetBillNumber,
                         companyId: parseInt(companyId),
                         journalEntryId: journalEntry.id,
                         purchaseBillId: oldBill.id,
-                        narration: 'Product Inventory Purchase'
+                        narration: 'Product Purchases'
                     }
                 });
-                await tx.ledger.update({ where: { id: inventoryLedger.id }, data: { currentBalance: { increment: ledgerProductAmount } } });
+                await tx.ledger.update({ where: { id: finalProductLedger.id }, data: { currentBalance: { increment: ledgerProductAmount } } });
                 await tx.ledger.update({ where: { id: newVendorLedgerId }, data: { currentBalance: { increment: ledgerProductAmount } } });
             }
 

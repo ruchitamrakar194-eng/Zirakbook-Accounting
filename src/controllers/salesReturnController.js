@@ -178,16 +178,18 @@ const createReturn = async (req, res) => {
 
             if (totalReturnCOGS > 0) {
                 const inventoryLedger = await resolveLedger(tx, 'Inventory Asset', 'ASSETS');
+                const purchaseLedger = await resolveLedger(tx, 'Purchases', 'EXPENSES') || await resolveLedger(tx, 'Purchase', 'EXPENSES');
                 const cogsLedger = await resolveLedger(tx, 'Cost of Goods Sold', 'EXPENSES') || await resolveLedger(tx, 'COGS', 'EXPENSES');
 
-                if (inventoryLedger && cogsLedger) {
+                const finalDebitLedger = purchaseLedger || inventoryLedger;
+                if (finalDebitLedger && cogsLedger) {
 
                     await tx.transaction.create({
                         data: {
                             date: new Date(date),
                             voucherType: 'JOURNAL',
                             voucherNumber: `COGS-REV-${autoVoucherNo}`,
-                            debitLedgerId: inventoryLedger.id,
+                            debitLedgerId: finalDebitLedger.id,
                             creditLedgerId: cogsLedger.id,
                             amount: totalReturnCOGS,
                             narration: `COGS Reversal for Return: ${returnNumber}`,
@@ -195,7 +197,7 @@ const createReturn = async (req, res) => {
                         }
                     });
 
-                    await tx.ledger.update({ where: { id: inventoryLedger.id }, data: { currentBalance: { increment: totalReturnCOGS } } });
+                    await tx.ledger.update({ where: { id: finalDebitLedger.id }, data: { currentBalance: { increment: totalReturnCOGS } } });
                     await tx.ledger.update({ where: { id: cogsLedger.id }, data: { currentBalance: { decrement: totalReturnCOGS } } });
                 }
             }

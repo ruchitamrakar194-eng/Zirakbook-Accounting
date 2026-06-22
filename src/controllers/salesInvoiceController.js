@@ -143,6 +143,7 @@ const createInvoice = async (req, res) => {
             const salesLedger = await resolveLedger('Sales Income', 'INCOME');
             const cogsLedger = await resolveLedger('Cost of Goods Sold', 'EXPENSES');
             const inventoryLedger = await resolveLedger('Inventory Asset', 'ASSETS');
+            const purchaseLedger = await resolveLedger('Purchases', 'EXPENSES') || await resolveLedger('Purchase', 'EXPENSES');
             const taxLedger = await resolveLedger('Tax', 'LIABILITIES');
             const discountAllowedLedger = await resolveLedger('Discount Allowed on Sale', 'EXPENSES');
 
@@ -652,14 +653,15 @@ const createInvoice = async (req, res) => {
                 }
             }
 
-            if (autoCogsEntry && totalCOGS > 0 && cogsLedger && inventoryLedger) {
+            const finalCreditLedger = purchaseLedger || inventoryLedger;
+            if (autoCogsEntry && totalCOGS > 0 && cogsLedger && finalCreditLedger) {
                 await tx.transaction.create({
                     data: {
                         date: new Date(date),
                         voucherType: 'JOURNAL',
                         voucherNumber: `COGS-${invoiceNumber}`,
                         debitLedgerId: cogsLedger.id,
-                        creditLedgerId: inventoryLedger.id,
+                        creditLedgerId: finalCreditLedger.id,
                         amount: totalCOGS,
                         narration: `COGS for Invoice: ${invoiceNumber}`,
                         companyId: parseInt(companyId),
@@ -669,7 +671,7 @@ const createInvoice = async (req, res) => {
                 });
 
                 await tx.ledger.update({ where: { id: cogsLedger.id }, data: { currentBalance: { increment: totalCOGS } } });
-                await tx.ledger.update({ where: { id: inventoryLedger.id }, data: { currentBalance: { decrement: totalCOGS } } });
+                await tx.ledger.update({ where: { id: finalCreditLedger.id }, data: { currentBalance: { decrement: totalCOGS } } });
             }
 
 
@@ -1352,6 +1354,11 @@ const updateInvoice = async (req, res) => {
                 }) || await tx.ledger.findFirst({
                     where: { companyId: parseInt(companyId), name: { contains: 'Inventory' } }
                 });
+                const purchaseLedger = await tx.ledger.findFirst({
+                    where: { companyId: parseInt(companyId), name: { contains: 'Purchases' } }
+                }) || await tx.ledger.findFirst({
+                    where: { companyId: parseInt(companyId), name: { contains: 'Purchase' } }
+                });
 
                 let totalCOGS = 0;
                 for (const item of invoiceItemsData) {
@@ -1398,7 +1405,8 @@ const updateInvoice = async (req, res) => {
                     }
                 }
 
-                if (autoCogsEntry && totalCOGS > 0 && cogsLedger && inventoryLedger) {
+                const finalCreditLedger = purchaseLedger || inventoryLedger;
+                if (autoCogsEntry && totalCOGS > 0 && cogsLedger && finalCreditLedger) {
                     // Find the journal entry we just created for this invoice
                     const journalForCOGS = await tx.journalentry.findFirst({
                         where: { companyId: parseInt(companyId), voucherNumber: updatedInvoice.invoiceNumber }
@@ -1410,7 +1418,7 @@ const updateInvoice = async (req, res) => {
                             voucherType: 'JOURNAL',
                             voucherNumber: `COGS-${updatedInvoice.invoiceNumber}`,
                             debitLedgerId: cogsLedger.id,
-                            creditLedgerId: inventoryLedger.id,
+                            creditLedgerId: finalCreditLedger.id,
                             amount: totalCOGS,
                             narration: `COGS for Updated Invoice: ${updatedInvoice.invoiceNumber}`,
                             companyId: parseInt(companyId),
@@ -1420,7 +1428,7 @@ const updateInvoice = async (req, res) => {
                     });
 
                     await tx.ledger.update({ where: { id: cogsLedger.id }, data: { currentBalance: { increment: totalCOGS } } });
-                    await tx.ledger.update({ where: { id: inventoryLedger.id }, data: { currentBalance: { decrement: totalCOGS } } });
+                    await tx.ledger.update({ where: { id: finalCreditLedger.id }, data: { currentBalance: { decrement: totalCOGS } } });
                 }
             }
 

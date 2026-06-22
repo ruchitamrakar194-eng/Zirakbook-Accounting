@@ -83,9 +83,9 @@ const createReturn = async (req, res) => {
             });
 
             const debitLedgerId = vendor.ledger.id;
-            const creditLedgerId = inventoryLedger?.id || purchaseLedger?.id;
+            const creditLedgerId = purchaseLedger?.id || inventoryLedger?.id;
 
-            if (!creditLedgerId) throw new Error('Could not find appropriate ledger (Inventory or Purchase) for return');
+            if (!creditLedgerId) throw new Error('Could not find appropriate ledger (Purchase or Inventory) for return');
 
 
             // Create Journal Entry

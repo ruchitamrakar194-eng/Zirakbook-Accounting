@@ -336,19 +336,21 @@ const createPOSInvoice = async (req, res) => {
                 await tx.ledger.update({ where: { id: debitLedgerId }, data: { currentBalance: { decrement: amt } } });
             }
 
-            // 3. Post COGS journal entry (Debit COGS / Credit Inventory Asset)
+            // 3. Post COGS journal entry (Debit COGS / Credit Purchases)
             if (autoCogsEntry && totalCOGS > 0) {
                 const cogsLedger = await resolveLedger('Point Of Sale', 'EXPENSES');
                 const inventoryAssetLedger = await resolveLedger('Inventory Asset', 'ASSETS') || await resolveLedger('Inventory', 'ASSETS');
+                const purchaseLedger = await resolveLedger('Purchases', 'EXPENSES') || await resolveLedger('Purchase', 'EXPENSES');
 
-                if (cogsLedger && inventoryAssetLedger) {
+                const finalCreditLedger = purchaseLedger || inventoryAssetLedger;
+                if (cogsLedger && finalCreditLedger) {
                     await tx.transaction.create({
                         data: {
                             date: new Date(),
                             voucherType: 'JOURNAL',
                             voucherNumber: `COGS-${invoiceNumber}`,
                             debitLedgerId: cogsLedger.id,
-                            creditLedgerId: inventoryAssetLedger.id,
+                            creditLedgerId: finalCreditLedger.id,
                             amount: totalCOGS,
                             narration: `COGS for POS Sale: ${invoiceNumber}`,
                             companyId: parseInt(currentCompanyId),
@@ -358,7 +360,7 @@ const createPOSInvoice = async (req, res) => {
                     });
 
                     await tx.ledger.update({ where: { id: cogsLedger.id }, data: { currentBalance: { increment: totalCOGS } } });
-                    await tx.ledger.update({ where: { id: inventoryAssetLedger.id }, data: { currentBalance: { decrement: totalCOGS } } });
+                    await tx.ledger.update({ where: { id: finalCreditLedger.id }, data: { currentBalance: { decrement: totalCOGS } } });
                 }
             }
 
@@ -975,15 +977,17 @@ const updatePOSInvoice = async (req, res) => {
             if (autoCogsEntry && totalCOGS > 0) {
                 const cogsLedger = await resolveLedger('Point Of Sale', 'EXPENSES');
                 const inventoryAssetLedger = await resolveLedger('Inventory Asset', 'ASSETS') || await resolveLedger('Inventory', 'ASSETS');
+                const purchaseLedger = await resolveLedger('Purchases', 'EXPENSES') || await resolveLedger('Purchase', 'EXPENSES');
 
-                if (cogsLedger && inventoryAssetLedger) {
+                const finalCreditLedger = purchaseLedger || inventoryAssetLedger;
+                if (cogsLedger && finalCreditLedger) {
                     await tx.transaction.create({
                         data: {
                             date: new Date(),
                             voucherType: 'JOURNAL',
                             voucherNumber: `COGS-${existingInvoice.invoiceNumber}`,
                             debitLedgerId: cogsLedger.id,
-                            creditLedgerId: inventoryAssetLedger.id,
+                            creditLedgerId: finalCreditLedger.id,
                             amount: totalCOGS,
                             narration: `COGS for POS Sale: ${existingInvoice.invoiceNumber} (Updated)`,
                             companyId: parseInt(currentCompanyId),
@@ -993,7 +997,7 @@ const updatePOSInvoice = async (req, res) => {
                     });
 
                     await tx.ledger.update({ where: { id: cogsLedger.id }, data: { currentBalance: { increment: totalCOGS } } });
-                    await tx.ledger.update({ where: { id: inventoryAssetLedger.id }, data: { currentBalance: { decrement: totalCOGS } } });
+                    await tx.ledger.update({ where: { id: finalCreditLedger.id }, data: { currentBalance: { decrement: totalCOGS } } });
                 }
             }
 
