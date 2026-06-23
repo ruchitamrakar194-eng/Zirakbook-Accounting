@@ -239,7 +239,8 @@ const updateChallan = async (req, res) => {
         }
 
         const existing = await prisma.deliverychallan.findFirst({
-            where: { id: parseInt(id), companyId: parseInt(companyId) }
+            where: { id: parseInt(id), companyId: parseInt(companyId) },
+            include: { deliverychallanitem: true }
         });
 
         if (!existing) {
@@ -256,10 +257,103 @@ const updateChallan = async (req, res) => {
             .filter(item => !isNaN(item.productId) && !isNaN(item.warehouseId) && item.quantity > 0);
 
         const result = await prisma.$transaction(async (tx) => {
+            const company = await tx.company.findUnique({ where: { id: parseInt(companyId) } });
+            const config = company.inventoryConfig || {};
+            const action = config.challanAction || 'ISSUE';
+
+            // 1. Revert Old Stock & Inventory Transactions
+            for (const item of existing.deliverychallanitem) {
+                if (item.productId && item.warehouseId) {
+                    if (action === 'ISSUE') {
+                        // Restore stock (Increment)
+                        await tx.stock.upsert({
+                            where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
+                            create: {
+                                warehouseId: item.warehouseId,
+                                productId: item.productId,
+                                quantity: item.quantity,
+                                initialQty: 0,
+                                minOrderQty: 0
+                            },
+                            update: {
+                                quantity: { increment: item.quantity }
+                            }
+                        });
+                    } else if (action === 'RESERVE') {
+                        // Revert reserve (Decrement)
+                        await tx.stock.upsert({
+                            where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
+                            create: {
+                                warehouseId: item.warehouseId,
+                                productId: item.productId,
+                                reservedQuantity: -item.quantity,
+                                quantity: 0,
+                                initialQty: 0,
+                                minOrderQty: 0
+                            },
+                            update: {
+                                reservedQuantity: { decrement: item.quantity }
+                            }
+                        });
+                    }
+                }
+            }
+
+            // Delete old associated inventory transactions
+            await tx.inventorytransaction.deleteMany({
+                where: {
+                    companyId: parseInt(companyId),
+                    reason: `Challan Issue: ${existing.challanNumber}`
+                }
+            });
+
             // Delete existing items
             await tx.deliverychallanitem.deleteMany({
                 where: { challanId: parseInt(id) }
             });
+
+            // 2. Apply New Stock & Inventory Transactions
+            for (const item of challanItems) {
+                if (item.productId && item.warehouseId) {
+                    if (action === 'ISSUE') {
+                        // Decrement Stock
+                        await tx.stock.upsert({
+                            where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
+                            create: {
+                                warehouseId: item.warehouseId,
+                                productId: item.productId,
+                                quantity: -item.quantity,
+                                initialQty: 0,
+                                minOrderQty: 0
+                            },
+                            update: {
+                                quantity: { decrement: item.quantity }
+                            }
+                        });
+
+                        // Log Inventory Transaction
+                        await tx.inventorytransaction.create({
+                            data: {
+                                date: new Date(date),
+                                type: 'SALE',
+                                productId: item.productId,
+                                fromWarehouseId: item.warehouseId,
+                                quantity: item.quantity,
+                                reason: `Challan Issue: ${challanNumber}`,
+                                companyId: parseInt(companyId),
+                                userId: req.user?.userId || null
+                            }
+                        });
+                    } else if (action === 'RESERVE') {
+                        // Increment Reserved Quantity
+                        await tx.stock.upsert({
+                            where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
+                            create: { warehouseId: item.warehouseId, productId: item.productId, reservedQuantity: item.quantity },
+                            update: { reservedQuantity: { increment: item.quantity } }
+                        });
+                    }
+                }
+            }
 
             // Update Challan
             return await tx.deliverychallan.update({
@@ -309,20 +403,78 @@ const deleteChallan = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Company ID is required' });
         }
 
-        const existing = await prisma.deliverychallan.findFirst({
-            where: { id: parseInt(id), companyId: parseInt(companyId) }
+        const challan = await prisma.deliverychallan.findFirst({
+            where: { id: parseInt(id), companyId: parseInt(companyId) },
+            include: { deliverychallanitem: true }
         });
 
-        if (!existing) {
+        if (!challan) {
             return res.status(404).json({ success: false, message: 'Delivery Challan not found' });
         }
 
-        await prisma.deliverychallan.delete({
-            where: { id: parseInt(id), companyId: parseInt(companyId) }
-        });
+        await prisma.$transaction(async (tx) => {
+            const company = await tx.company.findUnique({ where: { id: parseInt(companyId) } });
+            const config = company.inventoryConfig || {};
+            const action = config.challanAction || 'ISSUE';
+
+            // 1. Revert Stock
+            for (const item of challan.deliverychallanitem) {
+                if (item.productId && item.warehouseId) {
+                    if (action === 'ISSUE') {
+                        // Restore stock (Increment)
+                        await tx.stock.upsert({
+                            where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
+                            create: {
+                                warehouseId: item.warehouseId,
+                                productId: item.productId,
+                                quantity: item.quantity,
+                                initialQty: 0,
+                                minOrderQty: 0
+                            },
+                            update: {
+                                quantity: { increment: item.quantity }
+                            }
+                        });
+                    } else if (action === 'RESERVE') {
+                        // Revert reserve (Decrement)
+                        await tx.stock.upsert({
+                            where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
+                            create: {
+                                warehouseId: item.warehouseId,
+                                productId: item.productId,
+                                reservedQuantity: -item.quantity,
+                                quantity: 0,
+                                initialQty: 0,
+                                minOrderQty: 0
+                            },
+                            update: {
+                                reservedQuantity: { decrement: item.quantity }
+                            }
+                        });
+                    }
+                }
+            }
+
+            // Delete associated inventory transactions
+            await tx.inventorytransaction.deleteMany({
+                where: {
+                    companyId: parseInt(companyId),
+                    reason: `Challan Issue: ${challan.challanNumber}`
+                }
+            });
+
+            // 2. Delete deliverychallan items and the challan
+            await tx.deliverychallanitem.deleteMany({
+                where: { challanId: challan.id }
+            });
+            await tx.deliverychallan.delete({
+                where: { id: challan.id }
+            });
+        }, { timeout: 30000 });
 
         res.status(200).json({ success: true, message: 'Delivery Challan deleted successfully' });
     } catch (error) {
+        console.error('Delete Challan Error:', error);
         res.status(500).json({ success: false, message: error.message });
     }
 };

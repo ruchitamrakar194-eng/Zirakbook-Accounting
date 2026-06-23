@@ -1386,6 +1386,7 @@ const getDayBook = async (req, res) => {
                 voucherType: 'Sales',
                 voucherNo: inv.invoiceNumber,
                 ledger: inv.customer?.name || 'Unknown',
+                ledgerId: inv.customer?.ledgerId || null,
                 description: inv.notes || 'Sales Invoice',
                 debit: inv.totalAmount * (inv.exchangeRate || 1.0),
                 credit: 0,
@@ -1399,20 +1400,24 @@ const getDayBook = async (req, res) => {
                 where: {
                     companyId: companyIdInt,
                     createdAt: dateFilter,
-                    ...(lId ? { customer: { ledgerId: lId } } : {})
+                    ...(lId ? { OR: [{ customer: { ledgerId: lId } }, { transaction: { some: { OR: [{ debitLedgerId: lId }, { creditLedgerId: lId }] } } }] } : {})
                 },
-                include: { customer: true }
-            }).then(items => items.map(pos => ({
-                id: `POS-${pos.id}`,
-                date: pos.createdAt,
-                voucherType: 'POS Invoice',
-                voucherNo: pos.invoiceNumber,
-                ledger: pos.customer?.name || 'Walk-in (Cash)',
-                description: 'POS Sale',
-                debit: pos.totalAmount,
-                credit: 0,
-                source: { type: 'POS_INVOICE', id: pos.id, link: `/company/pos/view/${pos.id}` }
-            }))));
+                include: { customer: true, transaction: { select: { debitLedgerId: true } } }
+            }).then(items => items.map(pos => {
+                const ledgerId = pos.customer?.ledgerId || pos.transaction[0]?.debitLedgerId || null;
+                return {
+                    id: `POS-${pos.id}`,
+                    date: pos.createdAt,
+                    voucherType: 'POS Invoice',
+                    voucherNo: pos.invoiceNumber,
+                    ledger: pos.customer?.name || 'Walk-in (Cash)',
+                    ledgerId,
+                    description: 'POS Sale',
+                    debit: pos.totalAmount,
+                    credit: 0,
+                    source: { type: 'POS_INVOICE', id: pos.id, link: `/company/pos/view/${pos.id}` }
+                };
+            })));
         }
 
         // 3. Purchase Bills
@@ -1430,6 +1435,7 @@ const getDayBook = async (req, res) => {
                 voucherType: 'Purchase',
                 voucherNo: bill.billNumber,
                 ledger: bill.vendor?.name || 'Unknown',
+                ledgerId: bill.vendor?.ledgerId || null,
                 description: bill.notes || 'Purchase Bill',
                 debit: 0,
                 credit: bill.totalAmount * (bill.exchangeRate || 1.0),
@@ -1452,6 +1458,7 @@ const getDayBook = async (req, res) => {
                 voucherType: 'Receipt',
                 voucherNo: rec.receiptNumber,
                 ledger: rec.customer?.name || rec.cashBankAccount?.name || 'Unknown',
+                ledgerId: rec.customer?.ledgerId || rec.cashBankAccountId || null,
                 description: 'Payment Received',
                 debit: 0,
                 credit: rec.amount,
@@ -1474,6 +1481,7 @@ const getDayBook = async (req, res) => {
                 voucherType: 'Payment',
                 voucherNo: pay.paymentNumber,
                 ledger: pay.vendor?.name || pay.bankLedger?.name || 'Unknown',
+                ledgerId: pay.vendor?.ledgerId || pay.cashBankAccountId || null,
                 description: 'Payment Made',
                 debit: pay.amount,
                 credit: 0,
@@ -1487,6 +1495,7 @@ const getDayBook = async (req, res) => {
                 where: {
                     companyId: companyIdInt,
                     date: dateFilter,
+                    source: { not: 'system' },
                     ...(lId ? { transaction: { some: { OR: [{ debitLedgerId: lId }, { creditLedgerId: lId }] } } } : {})
                 },
                 include: { transaction: { include: { ledger_transaction_debitLedgerIdToledger: true, ledger_transaction_creditLedgerIdToledger: true } } }
@@ -1496,6 +1505,7 @@ const getDayBook = async (req, res) => {
                 voucherType: 'Journal',
                 voucherNo: je.voucherNumber || je.journalNumber || '-',
                 ledger: 'Journal Entry',
+                ledgerId: null,
                 description: je.narration || 'Journal Voucher',
                 debit: je.transaction.reduce((sum, t) => sum + (t.debitLedgerId ? t.amount : 0), 0),
                 credit: 0, // In Day Book we usually show total magnitude or DR/CR split
@@ -1519,6 +1529,7 @@ const getDayBook = async (req, res) => {
                 voucherType: v.voucherType,
                 voucherNo: v.voucherNumber,
                 ledger: v.vendor?.name || v.customer?.name || v.paidToLedger?.name || v.paidFromLedger?.name || 'Unknown',
+                ledgerId: v.vendor?.ledgerId || v.customer?.ledgerId || v.paidToLedgerId || v.paidFromLedgerId || null,
                 description: v.notes || `${v.voucherType} Voucher`,
                 debit: v.voucherType === 'EXPENSE' ? v.totalAmount : (v.voucherType === 'CONTRA' ? v.totalAmount : 0),
                 credit: v.voucherType === 'INCOME' ? v.totalAmount : 0,
@@ -1759,115 +1770,232 @@ const getAllTransactions = async (req, res) => {
             include: {
                 ledger_transaction_debitLedgerIdToledger: { include: { accountgroup: true } },
                 ledger_transaction_creditLedgerIdToledger: { include: { accountgroup: true } },
-                invoice: true,
-                purchasebill: true,
-                payment: true,
-                receipt: true,
+                invoice: { include: { customer: true } },
+                purchasebill: { include: { vendor: true } },
+                payment: { include: { vendor: true, bankLedger: true } },
+                receipt: { include: { customer: true, cashBankAccount: true } },
                 journalentry: true,
-                posinvoice: true
+                posinvoice: { include: { customer: true } }
             },
             orderBy: {
                 date: 'desc'
             }
         });
 
-        const formattedTransactions = transactions.map(txn => {
+        // Retrieve all vouchers for this company to link Journal/Contra/Expense/Income types to voucher.id
+        const vouchers = await prisma.voucher.findMany({
+            where: {
+                companyId: parseInt(companyId)
+            },
+            select: {
+                id: true,
+                voucherNumber: true,
+                voucherType: true
+            }
+        });
+
+        const voucherMap = new Map();
+        vouchers.forEach(v => {
+            const key = `${v.voucherType}_${v.voucherNumber}`;
+            voucherMap.set(key, v.id);
+        });
+
+        // Retrieve all sales returns for this company to link type to salesreturn.id
+        const salesReturns = await prisma.salesreturn.findMany({
+            where: {
+                companyId: parseInt(companyId)
+            },
+            select: {
+                id: true,
+                returnNumber: true,
+                autoVoucherNo: true,
+                manualVoucherNo: true
+            }
+        });
+
+        // Retrieve all purchase returns for this company to link type to purchasereturn.id
+        const purchaseReturns = await prisma.purchasereturn.findMany({
+            where: {
+                companyId: parseInt(companyId)
+            },
+            select: {
+                id: true,
+                returnNumber: true
+            }
+        });
+
+        const returnMap = new Map();
+        salesReturns.forEach(sr => {
+            if (sr.returnNumber) returnMap.set(`SALES_RETURN_${sr.returnNumber}`, sr.id);
+            if (sr.autoVoucherNo) returnMap.set(`SALES_RETURN_${sr.autoVoucherNo}`, sr.id);
+            if (sr.manualVoucherNo) returnMap.set(`SALES_RETURN_${sr.manualVoucherNo}`, sr.id);
+        });
+        purchaseReturns.forEach(pr => {
+            if (pr.returnNumber) returnMap.set(`PURCHASE_RETURN_${pr.returnNumber}`, pr.id);
+        });
+
+        // Group transactions in memory by source document/event to prevent duplicate rows
+        const groups = {};
+        const groupOrder = [];
+
+        transactions.forEach(txn => {
+            let key = '';
+            if (txn.voucherType === 'SALES_RETURN' || txn.voucherType === 'PURCHASE_RETURN') {
+                key = `${txn.voucherType}_${txn.voucherNumber}`;
+            } else if (txn.invoiceId) key = `invoice_${txn.invoiceId}`;
+            else if (txn.purchaseBillId) key = `purchasebill_${txn.purchaseBillId}`;
+            else if (txn.receiptId) key = `receipt_${txn.receiptId}`;
+            else if (txn.paymentId) key = `payment_${txn.paymentId}`;
+            else if (txn.posInvoiceId) key = `posinvoice_${txn.posInvoiceId}`;
+            else if (txn.journalEntryId) key = `journalentry_${txn.journalEntryId}`;
+            else if (txn.voucherNumber) key = `${txn.voucherType}_${txn.voucherNumber}`;
+            else key = `other_${txn.id}`;
+
+            if (!groups[key]) {
+                groups[key] = [];
+                groupOrder.push(key);
+            }
+            groups[key].push(txn);
+        });
+
+        const formattedTransactions = groupOrder.map(key => {
+            const txns = groups[key];
+            const primaryTxn = txns[0];
+            
             let balanceType = 'Debit';
             let partyName = '-';
             let accountType = '-';
-            let voucherNo = txn.voucherNumber || '-';
-            let note = txn.description;
+            let voucherNo = primaryTxn.voucherNumber || '-';
+            let note = primaryTxn.description;
             let targetId = null;
+            let amount = parseFloat(primaryTxn.amount);
+            let vType = primaryTxn.voucherType;
 
             // Resolve Note from source documents if description is empty or generic
             if (!note || note === '-') {
-                if (txn.invoice) note = txn.invoice.notes;
-                else if (txn.purchasebill) note = txn.purchasebill.notes;
-                else if (txn.receipt) note = txn.receipt.notes;
-                else if (txn.payment) note = txn.payment.notes;
-                else if (txn.journalentry) note = txn.journalentry.narration;
-                // else if (txn.posinvoice) note = txn.posinvoice.notes; // Assuming POS has notes, if not leave it
+                if (primaryTxn.invoice) note = primaryTxn.invoice.notes;
+                else if (primaryTxn.purchasebill) note = primaryTxn.purchasebill.notes;
+                else if (primaryTxn.receipt) note = primaryTxn.receipt.notes;
+                else if (primaryTxn.payment) note = primaryTxn.payment.notes;
+                else if (primaryTxn.journalentry) note = primaryTxn.journalentry.narration;
             }
 
-            // Logic to determine "Primary" view for the list
             // Sales (Invoice) -> Impact on Customer -> Debit
-            if (txn.voucherType === 'Sales' || txn.invoice) {
+            if (key.startsWith('invoice_') && primaryTxn.invoice) {
                 balanceType = 'Debit';
-                partyName = txn.ledger_transaction_debitLedgerIdToledger?.name;
-                accountType = txn.ledger_transaction_debitLedgerIdToledger?.accountgroup?.name || 'Debtors';
-                if (txn.invoice) {
-                    voucherNo = txn.invoice.invoiceNumber;
-                    targetId = txn.invoice.id;
-                }
+                partyName = primaryTxn.invoice.customer?.name || primaryTxn.ledger_transaction_debitLedgerIdToledger?.name;
+                accountType = primaryTxn.ledger_transaction_debitLedgerIdToledger?.accountgroup?.name || 'Debtors';
+                voucherNo = primaryTxn.invoice.invoiceNumber;
+                targetId = primaryTxn.invoice.id;
+                amount = parseFloat(primaryTxn.invoice.totalAmount);
+                vType = 'SALES_INVOICE';
+                if (!note) note = primaryTxn.invoice.notes;
             }
             // Purchase (Bill) -> Impact on Vendor -> Credit
-            else if (txn.voucherType === 'Purchase' || txn.purchasebill) {
+            else if (key.startsWith('purchasebill_') && primaryTxn.purchasebill) {
                 balanceType = 'Credit';
-                partyName = txn.ledger_transaction_creditLedgerIdToledger?.name;
-                accountType = txn.ledger_transaction_creditLedgerIdToledger?.accountgroup?.name || 'Creditors';
-                if (txn.purchasebill) {
-                    voucherNo = txn.purchasebill.billNumber;
-                    targetId = txn.purchasebill.id;
-                }
+                partyName = primaryTxn.purchasebill.vendor?.name || primaryTxn.ledger_transaction_creditLedgerIdToledger?.name;
+                accountType = primaryTxn.ledger_transaction_creditLedgerIdToledger?.accountgroup?.name || 'Creditors';
+                voucherNo = primaryTxn.purchasebill.billNumber;
+                targetId = primaryTxn.purchasebill.id;
+                amount = parseFloat(primaryTxn.purchasebill.totalAmount);
+                vType = 'PURCHASE_BILL';
+                if (!note) note = primaryTxn.purchasebill.notes;
             }
             // Receipt -> Impact on Customer -> Credit
-            else if (txn.voucherType === 'Receipt' || txn.receipt) {
+            else if (key.startsWith('receipt_') && primaryTxn.receipt) {
                 balanceType = 'Credit';
-                partyName = txn.ledger_transaction_creditLedgerIdToledger?.name; // Customer is credited
-                accountType = txn.ledger_transaction_creditLedgerIdToledger?.accountgroup?.name;
-                if (txn.receipt) {
-                    voucherNo = txn.receipt.receiptNumber;
-                    targetId = txn.receipt.id;
-                }
+                partyName = primaryTxn.receipt.customer?.name || primaryTxn.ledger_transaction_creditLedgerIdToledger?.name;
+                accountType = primaryTxn.ledger_transaction_creditLedgerIdToledger?.accountgroup?.name;
+                voucherNo = primaryTxn.receipt.receiptNumber;
+                targetId = primaryTxn.receipt.id;
+                amount = parseFloat(primaryTxn.receipt.amount);
+                vType = 'RECEIPT';
+                if (!note) note = primaryTxn.receipt.notes;
             }
             // Payment -> Impact on Vendor -> Debit
-            else if (txn.voucherType === 'Payment' || txn.payment) {
+            else if (key.startsWith('payment_') && primaryTxn.payment) {
                 balanceType = 'Debit';
-                partyName = txn.ledger_transaction_debitLedgerIdToledger?.name; // Vendor is debited
-                accountType = txn.ledger_transaction_debitLedgerIdToledger?.accountgroup?.name;
-                if (txn.payment) {
-                    voucherNo = txn.payment.paymentNumber;
-                    targetId = txn.payment.id;
-                }
+                partyName = primaryTxn.payment.vendor?.name || primaryTxn.ledger_transaction_debitLedgerIdToledger?.name;
+                accountType = primaryTxn.ledger_transaction_debitLedgerIdToledger?.accountgroup?.name;
+                voucherNo = primaryTxn.payment.paymentNumber;
+                targetId = primaryTxn.payment.id;
+                amount = parseFloat(primaryTxn.payment.amount);
+                vType = 'PAYMENT';
+                if (!note) note = primaryTxn.payment.notes;
             }
-            // POS
-            else if (txn.voucherType === 'POS_INVOICE' || txn.posinvoice) {
+            // POS Invoice -> Impact on Customer -> Debit
+            else if (key.startsWith('posinvoice_') && primaryTxn.posinvoice) {
                 balanceType = 'Debit';
-                partyName = txn.ledger_transaction_debitLedgerIdToledger?.name || 'Walk-in';
-                accountType = txn.ledger_transaction_debitLedgerIdToledger?.accountgroup?.name || 'Debtors';
-                if (txn.posinvoice) {
-                    voucherNo = txn.posinvoice.invoiceNumber;
-                    targetId = txn.posinvoice.id;
-                }
+                partyName = primaryTxn.posinvoice.customer?.name || 'Walk-in';
+                accountType = primaryTxn.ledger_transaction_debitLedgerIdToledger?.accountgroup?.name || 'Debtors';
+                voucherNo = primaryTxn.posinvoice.invoiceNumber;
+                targetId = primaryTxn.posinvoice.id;
+                amount = parseFloat(primaryTxn.posinvoice.totalAmount);
+                vType = 'POS_INVOICE';
+                if (!note) note = primaryTxn.posinvoice.notes;
             }
-            // Journal
-            else if (txn.voucherType === 'Journal' || txn.journalentry) {
-                balanceType = 'Debit'; // Default view
-                partyName = txn.ledger_transaction_debitLedgerIdToledger?.name;
-                accountType = txn.ledger_transaction_debitLedgerIdToledger?.accountgroup?.name;
-                if (txn.journalentry) {
-                    voucherNo = txn.journalentry.voucherNumber;
-                    targetId = txn.journalentry.id;
-                }
-                if (!note && txn.journalentry) note = txn.journalentry.narration;
+            // Journal Voucher -> Default view
+            else if (key.startsWith('journalentry_')) {
+                balanceType = 'Debit';
+                partyName = primaryTxn.ledger_transaction_debitLedgerIdToledger?.name || 'Journal Entry';
+                accountType = primaryTxn.ledger_transaction_debitLedgerIdToledger?.accountgroup?.name;
+                
+                const vNo = primaryTxn.journalentry?.voucherNumber || primaryTxn.voucherNumber;
+                voucherNo = vNo || '-';
+                
+                // Try to find matching voucher from our Map, fallback to journalentry.id
+                const lookupKey = `JOURNAL_${vNo}`;
+                targetId = voucherMap.get(lookupKey) || null;
+                vType = 'JOURNAL';
+                
+                amount = txns.reduce((sum, t) => sum + parseFloat(t.amount), 0);
+                if (!note && primaryTxn.journalentry) note = primaryTxn.journalentry.narration;
             }
-            // Default/Journal/Contra
+            // Expense / Income / Contra and other fallbacks
             else {
-                // Show Debit side as primary?
-                balanceType = 'Debit';
-                partyName = txn.ledger_transaction_debitLedgerIdToledger?.name;
-                accountType = txn.ledger_transaction_debitLedgerIdToledger?.accountgroup?.name;
+                if (primaryTxn.voucherType === 'SALES_RETURN') {
+                    balanceType = 'Credit';
+                } else if (primaryTxn.voucherType === 'PURCHASE_RETURN') {
+                    balanceType = 'Debit';
+                } else {
+                    balanceType = ['INCOME', 'RECEIPT'].includes(primaryTxn.voucherType) ? 'Credit' : 'Debit';
+                }
+
+                partyName = balanceType === 'Debit' 
+                    ? primaryTxn.ledger_transaction_debitLedgerIdToledger?.name 
+                    : primaryTxn.ledger_transaction_creditLedgerIdToledger?.name;
+                accountType = balanceType === 'Debit'
+                    ? primaryTxn.ledger_transaction_debitLedgerIdToledger?.accountgroup?.name
+                    : primaryTxn.ledger_transaction_creditLedgerIdToledger?.accountgroup?.name;
+                
+                if (['EXPENSE', 'INCOME', 'CONTRA'].includes(primaryTxn.voucherType)) {
+                    targetId = primaryTxn.id;
+                    if (primaryTxn.voucherType === 'CONTRA') {
+                        const isBankTransfer = !primaryTxn.voucherNumber?.startsWith('CNT-');
+                        if (isBankTransfer) {
+                            vType = 'BANK_TRANSFER';
+                        }
+                    }
+                } else if (primaryTxn.voucherType === 'JOURNAL') {
+                    const lookupKey = `JOURNAL_${primaryTxn.voucherNumber}`;
+                    targetId = voucherMap.get(lookupKey) || null;
+                } else if (['SALES_RETURN', 'PURCHASE_RETURN'].includes(primaryTxn.voucherType)) {
+                    const lookupKey = `${primaryTxn.voucherType}_${primaryTxn.voucherNumber}`;
+                    targetId = returnMap.get(lookupKey) || null;
+                }
+                amount = txns.reduce((sum, t) => sum + parseFloat(t.amount), 0);
             }
 
             return {
-                id: txn.id,
-                date: txn.date,
-                transactionId: `TXN-${txn.id.toString().padStart(5, '0')}`,
+                id: primaryTxn.id,
+                date: primaryTxn.date,
+                transactionId: `TXN-${primaryTxn.id.toString().padStart(5, '0')}`,
                 targetId,
                 balanceType,
-                voucherType: txn.voucherType,
+                voucherType: vType,
                 voucherNo,
-                amount: parseFloat(txn.amount),
+                amount,
                 fromTo: partyName || 'Unknown',
                 accountType: accountType || 'General',
                 note: note || '-'

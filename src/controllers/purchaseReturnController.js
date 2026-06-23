@@ -83,7 +83,7 @@ const createReturn = async (req, res) => {
             });
 
             const debitLedgerId = vendor.ledger.id;
-            const creditLedgerId = purchaseLedger?.id || inventoryLedger?.id;
+            const creditLedgerId = inventoryLedger?.id || purchaseLedger?.id;
 
             if (!creditLedgerId) throw new Error('Could not find appropriate ledger (Purchase or Inventory) for return');
 
@@ -133,7 +133,7 @@ const createReturn = async (req, res) => {
             });
 
             return purchaseReturn;
-        });
+        }, { timeout: 90000 });
 
         await numberingService.incrementNumber(companyId, 'purchasereturn', returnNumber);
         res.status(201).json({ success: true, data: result });
@@ -215,7 +215,7 @@ const getReturnById = async (req, res) => {
 const updateReturn = async (req, res) => {
     try {
         const { id } = req.params;
-        const { returnNumber, date, vendorId, purchaseBillId, items, reason, totalAmount, narration, warehouseId, customFields } = req.body;
+        const { returnNumber, date, vendorId, purchaseBillId, items, reason, totalAmount, customFields } = req.body;
         const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
 
         const existingReturn = await prisma.purchasereturn.findFirst({
@@ -227,11 +227,6 @@ const updateReturn = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Purchase return not found' });
         }
 
-        // Delete old items and create new ones
-        await prisma.purchasereturnitem.deleteMany({
-            where: { purchaseReturnId: parseInt(id) }
-        });
-
         const returnItems = items.map(item => ({
             productId: parseInt(item.productId),
             warehouseId: parseInt(item.warehouseId),
@@ -240,33 +235,209 @@ const updateReturn = async (req, res) => {
             amount: parseFloat(item.amount)
         }));
 
-        const updatedReturn = await prisma.purchasereturn.update({
-            where: { id: parseInt(id) },
-            data: {
-                returnNumber,
-                date: date ? new Date(date) : undefined,
-                vendorId: vendorId ? parseInt(vendorId) : undefined,
-                purchaseBillId: purchaseBillId ? parseInt(purchaseBillId) : undefined,
-                totalAmount: totalAmount ? parseFloat(totalAmount) : undefined,
-                reason,
-                customFields: customFields !== undefined ? (typeof customFields === 'string' ? customFields : JSON.stringify(customFields)) : undefined,
-                purchasereturnitem: {
-                    create: returnItems
+        const result = await prisma.$transaction(async (tx) => {
+            // 1. Revert Physical Stock of Old Items (Increment stock since purchase return decremented it)
+            for (const item of existingReturn.purchasereturnitem) {
+                await tx.stock.upsert({
+                    where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
+                    create: {
+                        warehouseId: item.warehouseId,
+                        productId: item.productId,
+                        quantity: item.quantity,
+                        initialQty: 0,
+                        minOrderQty: 0
+                    },
+                    update: {
+                        quantity: { increment: item.quantity }
+                    }
+                });
+            }
+
+            // Delete old inventory transactions
+            await tx.inventorytransaction.deleteMany({
+                where: {
+                    productId: { in: existingReturn.purchasereturnitem.map(i => i.productId) },
+                    reason: `Purchase Return: ${existingReturn.returnNumber}`,
+                    companyId: parseInt(companyId)
                 }
-            },
-            include: {
-                vendor: true,
-                purchasereturnitem: {
-                    include: {
-                        product: true,
-                        warehouse: true
+            });
+
+            // 2. Revert Old Vendor Balance & Accounting Ledger Balances
+            const oldVendorId = existingReturn.vendorId;
+            const oldTotalAmount = parseFloat(existingReturn.totalAmount);
+
+            // Revert vendor account balance (add it back, since it was decremented on return)
+            await tx.vendor.update({
+                where: { id: oldVendorId },
+                data: { accountBalance: { increment: oldTotalAmount } }
+            });
+
+            // Revert transaction ledger balances
+            const txs = await tx.transaction.findMany({
+                where: {
+                    companyId: parseInt(companyId),
+                    voucherNumber: existingReturn.returnNumber,
+                    voucherType: 'PURCHASE_RETURN'
+                }
+            });
+
+            for (const t of txs) {
+                await tx.ledger.update({
+                    where: { id: t.debitLedgerId },
+                    data: { currentBalance: { increment: t.amount } } // Vendor ledger (Liability) increases back
+                });
+                await tx.ledger.update({
+                    where: { id: t.creditLedgerId },
+                    data: { currentBalance: { increment: t.amount } } // Purchases ledger (Expense) increases back
+                });
+            }
+
+            // Cleanup accounting records
+            const journalEntryIds = [...new Set(txs.map(t => t.journalEntryId).filter(Boolean))];
+
+            await tx.transaction.deleteMany({
+                where: {
+                    companyId: parseInt(companyId),
+                    voucherNumber: existingReturn.returnNumber,
+                    voucherType: 'PURCHASE_RETURN'
+                }
+            });
+
+            if (journalEntryIds.length > 0) {
+                await tx.journalentry.deleteMany({
+                    where: { id: { in: journalEntryIds } }
+                });
+            }
+
+            // Delete existing purchasereturn items from DB
+            await tx.purchasereturnitem.deleteMany({
+                where: { purchaseReturnId: parseInt(id) }
+            });
+
+            // 3. Update Purchase Return Document Header and Create Items
+            const updatedReturn = await tx.purchasereturn.update({
+                where: { id: parseInt(id) },
+                data: {
+                    returnNumber,
+                    date: date ? new Date(date) : undefined,
+                    vendorId: vendorId ? parseInt(vendorId) : undefined,
+                    purchaseBillId: purchaseBillId ? parseInt(purchaseBillId) : undefined,
+                    totalAmount: totalAmount ? parseFloat(totalAmount) : undefined,
+                    reason,
+                    customFields: customFields !== undefined ? (typeof customFields === 'string' ? customFields : JSON.stringify(customFields)) : undefined,
+                    purchasereturnitem: {
+                        create: returnItems
                     }
                 },
-                purchasebill: true
-            }
-        });
+                include: {
+                    vendor: true,
+                    purchasereturnitem: {
+                        include: {
+                            product: true,
+                            warehouse: true
+                        }
+                    },
+                    purchasebill: true
+                }
+            });
 
-        res.status(200).json({ success: true, data: updatedReturn });
+            // 4. Apply New Physical Stock (Decrement stock)
+            for (const item of returnItems) {
+                await tx.stock.upsert({
+                    where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
+                    create: {
+                        warehouseId: item.warehouseId,
+                        productId: item.productId,
+                        quantity: -item.quantity,
+                        initialQty: 0,
+                        minOrderQty: 0
+                    },
+                    update: {
+                        quantity: { decrement: item.quantity }
+                    }
+                });
+
+                await tx.inventorytransaction.create({
+                    data: {
+                        date: new Date(date),
+                        type: 'RETURN', // Purchase Return
+                        productId: item.productId,
+                        fromWarehouseId: item.warehouseId,
+                        quantity: item.quantity,
+                        companyId: parseInt(companyId),
+                        userId: req.user?.userId || null,
+                        reason: `Purchase Return: ${returnNumber}`
+                    }
+                });
+            }
+
+            // 5. Apply New Ledger and Vendor Balances
+            const targetVendorId = vendorId ? parseInt(vendorId) : existingReturn.vendorId;
+            const vendor = await tx.vendor.findUnique({
+                where: { id: targetVendorId },
+                include: { ledger: true }
+            });
+            if (!vendor || !vendor.ledger) throw new Error('Vendor ledger not found');
+
+            const inventoryLedger = await tx.ledger.findFirst({
+                where: { companyId: parseInt(companyId), name: { contains: 'Inventory' }, accountgroup: { type: 'ASSETS' } }
+            });
+            const purchaseLedger = await tx.ledger.findFirst({
+                where: { companyId: parseInt(companyId), name: { contains: 'Purchase' }, accountgroup: { type: 'EXPENSES' } }
+            });
+
+            const debitLedgerId = vendor.ledger.id;
+            const creditLedgerId = inventoryLedger?.id || purchaseLedger?.id;
+
+            if (!creditLedgerId) throw new Error('Could not find appropriate ledger (Purchase or Inventory) for return');
+
+            // Create Journal Entry
+            const journalEntry = await tx.journalentry.create({
+                data: {
+                    date: new Date(date),
+                    voucherNumber: returnNumber,
+                    narration: `Purchase Return - ${reason || ''}`,
+                    companyId: parseInt(companyId),
+                }
+            });
+
+            const finalAmount = totalAmount ? parseFloat(totalAmount) : parseFloat(existingReturn.totalAmount);
+
+            // Debit Vendor (Reduce Liability), Credit Purchases/Inventory
+            await tx.transaction.create({
+                data: {
+                    date: new Date(date),
+                    amount: finalAmount,
+                    debitLedgerId: debitLedgerId,
+                    creditLedgerId: creditLedgerId,
+                    voucherType: 'PURCHASE_RETURN',
+                    voucherNumber: returnNumber,
+                    companyId: parseInt(companyId),
+                    journalEntryId: journalEntry.id,
+                    narration: 'Purchase Return'
+                }
+            });
+
+            // Update Vendor Balance (Debit reduces Credit balance for Vendor)
+            await tx.vendor.update({
+                where: { id: targetVendorId },
+                data: { accountBalance: { decrement: finalAmount } }
+            });
+
+            // Update Ledger Balances
+            await tx.ledger.update({
+                where: { id: debitLedgerId },
+                data: { currentBalance: { decrement: finalAmount } }
+            });
+            await tx.ledger.update({
+                where: { id: creditLedgerId },
+                data: { currentBalance: { decrement: finalAmount } }
+            });
+
+            return updatedReturn;
+        }, { timeout: 90000 });
+
+        res.status(200).json({ success: true, data: result });
     } catch (error) {
         console.error('Update Return Error:', error);
         res.status(500).json({ success: false, message: error.message });
@@ -358,7 +529,7 @@ const deleteReturn = async (req, res) => {
             // 4. Delete Return items and document
             await tx.purchasereturnitem.deleteMany({ where: { purchaseReturnId: purchaseReturn.id } });
             await tx.purchasereturn.delete({ where: { id: purchaseReturn.id } });
-        });
+        }, { timeout: 90000 });
 
         res.status(200).json({ success: true, message: 'Purchase return deleted successfully' });
     } catch (error) {

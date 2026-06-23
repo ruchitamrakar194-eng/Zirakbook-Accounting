@@ -297,7 +297,7 @@ const createBill = async (req, res) => {
             const ledgerTotalAmount = totalAmountValue * docExchangeRate;
 
             // Entry for Products (Debit Purchases)
-            const finalProductLedger = purchaseLedger || inventoryLedger;
+            const finalProductLedger = inventoryLedger || purchaseLedger;
             if (totalProductGross > 0 && finalProductLedger) {
                 await tx.transaction.create({
                     data: {
@@ -1205,7 +1205,7 @@ const updateBill = async (req, res) => {
             const ledgerDiscountAmount = totalDiscount * docExchangeRate;
             const ledgerTotalAmount = totalAmountValue * docExchangeRate;
 
-            const finalProductLedger = purchaseLedger || inventoryLedger;
+            const finalProductLedger = inventoryLedger || purchaseLedger;
             if (totalProductGross > 0 && finalProductLedger) {
                 await tx.transaction.create({
                     data: {

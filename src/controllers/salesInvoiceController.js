@@ -653,7 +653,7 @@ const createInvoice = async (req, res) => {
                 }
             }
 
-            const finalCreditLedger = purchaseLedger || inventoryLedger;
+            const finalCreditLedger = inventoryLedger || purchaseLedger;
             if (autoCogsEntry && totalCOGS > 0 && cogsLedger && finalCreditLedger) {
                 await tx.transaction.create({
                     data: {
@@ -1405,7 +1405,7 @@ const updateInvoice = async (req, res) => {
                     }
                 }
 
-                const finalCreditLedger = purchaseLedger || inventoryLedger;
+                const finalCreditLedger = inventoryLedger || purchaseLedger;
                 if (autoCogsEntry && totalCOGS > 0 && cogsLedger && finalCreditLedger) {
                     // Find the journal entry we just created for this invoice
                     const journalForCOGS = await tx.journalentry.findFirst({

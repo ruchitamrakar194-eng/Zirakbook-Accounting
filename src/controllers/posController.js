@@ -342,7 +342,7 @@ const createPOSInvoice = async (req, res) => {
                 const inventoryAssetLedger = await resolveLedger('Inventory Asset', 'ASSETS') || await resolveLedger('Inventory', 'ASSETS');
                 const purchaseLedger = await resolveLedger('Purchases', 'EXPENSES') || await resolveLedger('Purchase', 'EXPENSES');
 
-                const finalCreditLedger = purchaseLedger || inventoryAssetLedger;
+                const finalCreditLedger = inventoryAssetLedger || purchaseLedger;
                 if (cogsLedger && finalCreditLedger) {
                     await tx.transaction.create({
                         data: {
@@ -979,7 +979,7 @@ const updatePOSInvoice = async (req, res) => {
                 const inventoryAssetLedger = await resolveLedger('Inventory Asset', 'ASSETS') || await resolveLedger('Inventory', 'ASSETS');
                 const purchaseLedger = await resolveLedger('Purchases', 'EXPENSES') || await resolveLedger('Purchase', 'EXPENSES');
 
-                const finalCreditLedger = purchaseLedger || inventoryAssetLedger;
+                const finalCreditLedger = inventoryAssetLedger || purchaseLedger;
                 if (cogsLedger && finalCreditLedger) {
                     await tx.transaction.create({
                         data: {

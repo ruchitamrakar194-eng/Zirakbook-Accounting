@@ -181,7 +181,7 @@ const createReturn = async (req, res) => {
                 const purchaseLedger = await resolveLedger(tx, 'Purchases', 'EXPENSES') || await resolveLedger(tx, 'Purchase', 'EXPENSES');
                 const cogsLedger = await resolveLedger(tx, 'Cost of Goods Sold', 'EXPENSES') || await resolveLedger(tx, 'COGS', 'EXPENSES');
 
-                const finalDebitLedger = purchaseLedger || inventoryLedger;
+                const finalDebitLedger = inventoryLedger || purchaseLedger;
                 if (finalDebitLedger && cogsLedger) {
 
                     await tx.transaction.create({
@@ -286,7 +286,7 @@ const updateReturn = async (req, res) => {
         // Check if return exists
         const existing = await prisma.salesreturn.findFirst({
             where: { id: parseInt(id), companyId: parseInt(companyId) },
-            include: { salesreturnitem: true }
+            include: { salesreturnitem: true, customer: true }
         });
 
         if (!existing) {
@@ -316,12 +316,126 @@ const updateReturn = async (req, res) => {
         });
 
         const result = await prisma.$transaction(async (tx) => {
-            // Delete old items
+            const resolveLedger = async (txOrPrisma, namePattern, type) => {
+                let ledger = await txOrPrisma.ledger.findFirst({
+                    where: { companyId: parseInt(companyId), name: { contains: namePattern } }
+                });
+                if (!ledger) {
+                    const group = await txOrPrisma.accountgroup.findFirst({ where: { companyId: parseInt(companyId), type: type } });
+                    if (group) {
+                        ledger = await txOrPrisma.ledger.create({
+                            data: {
+                                name: namePattern,
+                                groupId: group.id,
+                                companyId: parseInt(companyId),
+                                isControlAccount: true
+                            }
+                        });
+                    }
+                }
+                return ledger;
+            };
+
+            const returnLedger = await resolveLedger(tx, 'Sales Return', 'EXPENSES') || await resolveLedger(tx, 'Sales Return', 'INCOME');
+            if (!returnLedger) throw new Error('Sales Return ledger could not be resolved or created');
+
+            // 1. Reverse Inventory Logic (Decrement Stock for old items)
+            for (const item of existing.salesreturnitem) {
+                await tx.stock.upsert({
+                    where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
+                    create: {
+                        warehouseId: item.warehouseId,
+                        productId: item.productId,
+                        quantity: -item.quantity,
+                        initialQty: 0,
+                        minOrderQty: 0
+                    },
+                    update: {
+                        quantity: { decrement: item.quantity }
+                    }
+                });
+            }
+
+            // Delete old inventory transactions
+            await tx.inventorytransaction.deleteMany({
+                where: {
+                    productId: { in: existing.salesreturnitem.map(i => i.productId) },
+                    reason: `Sales Return: ${existing.returnNumber}`,
+                    companyId: parseInt(companyId)
+                }
+            });
+
+            // 2. Reverse Invoice Balance update if linked
+            if (existing.invoiceId) {
+                const oldInvoice = await tx.invoice.findUnique({ where: { id: existing.invoiceId } });
+                if (oldInvoice) {
+                    const revPaid = Math.max(0, (oldInvoice.paidAmount || 0) - existing.totalAmount);
+                    const revBalance = (oldInvoice.totalAmount || 0) - revPaid;
+                    await tx.invoice.update({
+                        where: { id: oldInvoice.id },
+                        data: {
+                            paidAmount: revPaid,
+                            balanceAmount: revBalance,
+                            status: revBalance <= 0 ? 'PAID' : (revPaid > 0 ? 'PARTIAL' : 'UNPAID')
+                        }
+                    });
+                }
+            }
+
+            // 3. Reverse Accounting Entries for old return
+            if (returnLedger) {
+                await tx.ledger.update({
+                    where: { id: returnLedger.id },
+                    data: { currentBalance: { decrement: existing.totalAmount } }
+                });
+            }
+
+            if (existing.customer && existing.customer.ledgerId) {
+                await tx.ledger.update({
+                    where: { id: existing.customer.ledgerId },
+                    data: { currentBalance: { increment: existing.totalAmount } }
+                });
+            }
+
+            // Reverse old COGS Reversal entries if they exist
+            const oldCogsRevTrans = await tx.transaction.findFirst({
+                where: {
+                    companyId: parseInt(companyId),
+                    voucherNumber: `COGS-REV-${existing.autoVoucherNo}`,
+                    voucherType: 'JOURNAL'
+                }
+            });
+
+            if (oldCogsRevTrans) {
+                await tx.ledger.update({
+                    where: { id: oldCogsRevTrans.debitLedgerId },
+                    data: { currentBalance: { decrement: oldCogsRevTrans.amount } }
+                });
+                await tx.ledger.update({
+                    where: { id: oldCogsRevTrans.creditLedgerId },
+                    data: { currentBalance: { increment: oldCogsRevTrans.amount } }
+                });
+
+                await tx.transaction.delete({
+                    where: { id: oldCogsRevTrans.id }
+                });
+            }
+
+            // Delete old main transactions
+            await tx.transaction.deleteMany({
+                where: {
+                    voucherNumber: existing.autoVoucherNo,
+                    voucherType: 'SALES_RETURN',
+                    companyId: parseInt(companyId)
+                }
+            });
+
+            // Delete existing salesreturn items from DB
             await tx.salesreturnitem.deleteMany({
                 where: { salesReturnId: parseInt(id) }
             });
 
-            // Update sales return
+            // 4. Update Sales Return Document
             const updated = await tx.salesreturn.update({
                 where: { id: parseInt(id) },
                 data: {
@@ -343,6 +457,116 @@ const updateReturn = async (req, res) => {
                     salesreturnitem: { include: { product: true, warehouse: true } }
                 }
             });
+
+            // 5. Apply New Inventory Logic (Increment Stock)
+            for (const item of returnItems) {
+                await tx.stock.upsert({
+                    where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
+                    create: {
+                        warehouseId: item.warehouseId,
+                        productId: item.productId,
+                        quantity: item.quantity,
+                        initialQty: 0,
+                        minOrderQty: 0
+                    },
+                    update: {
+                        quantity: { increment: item.quantity }
+                    }
+                });
+
+                // Log Transaction
+                await tx.inventorytransaction.create({
+                    data: {
+                        date: new Date(date),
+                        type: 'RETURN',
+                        productId: item.productId,
+                        toWarehouseId: item.warehouseId,
+                        quantity: item.quantity,
+                        reason: `Sales Return: ${returnNumber}`,
+                        companyId: parseInt(companyId),
+                        userId: req.user?.userId || null
+                    }
+                });
+            }
+
+            // 6. Apply New Invoice Balance if linked
+            if (invoiceId) {
+                const invoice = await tx.invoice.findUnique({ where: { id: parseInt(invoiceId) } });
+                if (invoice) {
+                    const newPaid = invoice.paidAmount + totalAmount;
+                    const newBalance = Math.max(0, invoice.totalAmount - newPaid);
+
+                    await tx.invoice.update({
+                        where: { id: invoice.id },
+                        data: {
+                            paidAmount: newPaid,
+                            balanceAmount: newBalance,
+                            status: newBalance <= 0 ? 'PAID' : (newPaid > 0 ? 'PARTIAL' : 'UNPAID')
+                        }
+                    });
+                }
+            }
+
+            // 7. Apply New Accounting Entry (Main)
+            // DR Sales Return, CR Customer
+            await tx.ledger.update({
+                where: { id: returnLedger.id },
+                data: { currentBalance: { increment: totalAmount } }
+            });
+
+            await tx.ledger.update({
+                where: { id: customer.ledgerId },
+                data: { currentBalance: { decrement: totalAmount } }
+            });
+
+            await tx.transaction.create({
+                data: {
+                    date: new Date(date),
+                    voucherType: 'SALES_RETURN',
+                    voucherNumber: existing.autoVoucherNo,
+                    debitLedgerId: returnLedger.id,
+                    creditLedgerId: customer.ledgerId,
+                    amount: totalAmount,
+                    narration: `Sales Return from ${customer.name}${invoiceId ? ' for Invoice ID: ' + invoiceId : ''}`,
+                    companyId: parseInt(companyId),
+                    invoiceId: invoiceId ? parseInt(invoiceId) : null
+                }
+            });
+
+            // 8. COGS and Inventory Reversal (DR Inventory, CR COGS)
+            let totalReturnCOGS = 0;
+            for (const item of returnItems) {
+                const product = await tx.product.findUnique({ where: { id: item.productId } });
+                if (product) {
+                    const unitCost = product.purchasePrice || product.initialCost || 0;
+                    totalReturnCOGS += (unitCost * item.quantity);
+                }
+            }
+
+            if (totalReturnCOGS > 0) {
+                const inventoryLedger = await resolveLedger(tx, 'Inventory Asset', 'ASSETS');
+                const purchaseLedger = await resolveLedger(tx, 'Purchases', 'EXPENSES') || await resolveLedger(tx, 'Purchase', 'EXPENSES');
+                const cogsLedger = await resolveLedger(tx, 'Cost of Goods Sold', 'EXPENSES') || await resolveLedger(tx, 'COGS', 'EXPENSES');
+
+                const finalDebitLedger = inventoryLedger || purchaseLedger;
+                if (finalDebitLedger && cogsLedger) {
+                    await tx.transaction.create({
+                        data: {
+                            date: new Date(date),
+                            voucherType: 'JOURNAL',
+                            voucherNumber: `COGS-REV-${existing.autoVoucherNo}`,
+                            debitLedgerId: finalDebitLedger.id,
+                            creditLedgerId: cogsLedger.id,
+                            amount: totalReturnCOGS,
+                            narration: `COGS Reversal for Return: ${returnNumber}`,
+                            companyId: parseInt(companyId),
+                        }
+                    });
+
+                    await tx.ledger.update({ where: { id: finalDebitLedger.id }, data: { currentBalance: { increment: totalReturnCOGS } } });
+                    await tx.ledger.update({ where: { id: cogsLedger.id }, data: { currentBalance: { decrement: totalReturnCOGS } } });
+                }
+            }
 
             return updated;
         }, { timeout: 30000 });

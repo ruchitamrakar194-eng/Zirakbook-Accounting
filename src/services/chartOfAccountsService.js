@@ -723,7 +723,15 @@ const getLedgerTransactions = async (ledgerId, companyId) => {
                             select: { id: true, name: true, nameArabic: true, phone: true, email: true }
                         }
                     }
-                }
+                },
+                posinvoice: {
+                    include: {
+                        customer: {
+                            select: { id: true, name: true, nameArabic: true, phone: true, email: true }
+                        }
+                    }
+                },
+                journalentry: true
             },
             orderBy: { date: 'desc' }
         });
@@ -731,7 +739,12 @@ const getLedgerTransactions = async (ledgerId, companyId) => {
         // Normalize relation fields to support frontend camelCase access
         const normalized = transactions.map(t => ({
             ...t,
+            invoice: t.invoice ?? null,
             purchaseBill: t.purchasebill ?? t.purchaseBill ?? null,
+            receipt: t.receipt ?? null,
+            payment: t.payment ?? null,
+            posInvoice: t.posinvoice ?? null,
+            journalEntry: t.journalentry ?? null,
             debitLedger: t.ledger_transaction_debitLedgerIdToledger ?? null,
             creditLedger: t.ledger_transaction_creditLedgerIdToledger ?? null
         }));
@@ -741,7 +754,7 @@ const getLedgerTransactions = async (ledgerId, companyId) => {
         const balanceMap = await calculateDynamicLedgerBalances(companyId, inventoryValue);
         const entry = balanceMap.get(parseInt(ledgerId));
 
-        if (entry && (entry.isOBE || entry.isRetainedEarnings)) {
+        if (entry && (entry.isOBE || entry.isRetainedEarnings || entry.isInventory)) {
             const opening = entry.ledger.openingBalance || 0;
             let actualTxnDebit = 0;
             let actualTxnCredit = 0;
@@ -749,27 +762,44 @@ const getLedgerTransactions = async (ledgerId, companyId) => {
                 if (t.debitLedgerId === parseInt(ledgerId)) actualTxnDebit += t.amount || 0;
                 if (t.creditLedgerId === parseInt(ledgerId)) actualTxnCredit += t.amount || 0;
             });
-            const actualBalance = opening + actualTxnCredit - actualTxnDebit;
+
+            const isDebitNormal = ['ASSETS', 'EXPENSES'].includes(entry.groupType);
+            const actualBalance = isDebitNormal
+                ? (opening + actualTxnDebit - actualTxnCredit)
+                : (opening + actualTxnCredit - actualTxnDebit);
+
             const diff = entry.dynamicBalance - actualBalance;
 
             if (Math.abs(diff) > 0.01) {
                 const isOBE = entry.isOBE;
-                const adjustmentLedger = { name: isOBE ? 'Trial Balance Adjustment' : 'Income / Expense Summary' };
-                
+                const isInventory = entry.isInventory;
+                const adjustmentLedger = { name: isOBE ? 'Trial Balance Adjustment' : (isInventory ? 'Inventory Valuation Adjustment' : 'Income / Expense Summary') };
+
+                let debitId, creditId;
+                if (isDebitNormal) {
+                    debitId = diff > 0 ? parseInt(ledgerId) : null;
+                    creditId = diff < 0 ? parseInt(ledgerId) : null;
+                } else {
+                    debitId = diff < 0 ? parseInt(ledgerId) : null;
+                    creditId = diff > 0 ? parseInt(ledgerId) : null;
+                }
+
                 normalized.push({
-                    id: isOBE ? 999999 : 999998,
+                    id: isOBE ? 999999 : (isInventory ? 999997 : 999998),
                     date: new Date(),
                     amount: Math.abs(diff),
-                    debitLedgerId: diff < 0 ? parseInt(ledgerId) : null,
-                    creditLedgerId: diff > 0 ? parseInt(ledgerId) : null,
+                    debitLedgerId: debitId,
+                    creditLedgerId: creditId,
                     voucherType: 'JOURNAL',
-                    voucherNumber: isOBE ? 'BAL-ADJ' : 'NET-PROFIT',
+                    voucherNumber: isOBE ? 'BAL-ADJ' : (isInventory ? 'BAL-ADJ' : 'NET-PROFIT'),
                     narration: isOBE
                         ? 'Opening Balance Equity - Balancing Adjustment'
-                        : 'Retained Earnings - Net Profit/Loss for Period',
+                        : (isInventory
+                            ? 'Inventory Valuation - Balancing Adjustment'
+                            : 'Retained Earnings - Net Profit/Loss for Period'),
                     companyId: companyId,
-                    debitLedger: diff < 0 ? entry.ledger : adjustmentLedger,
-                    creditLedger: diff > 0 ? entry.ledger : adjustmentLedger
+                    debitLedger: debitId === parseInt(ledgerId) ? entry.ledger : adjustmentLedger,
+                    creditLedger: creditId === parseInt(ledgerId) ? entry.ledger : adjustmentLedger
                 });
             }
         }
