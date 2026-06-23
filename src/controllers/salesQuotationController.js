@@ -75,7 +75,8 @@ const createQuotation = async (req, res) => {
                 rate: itemRate,
                 discount: itemDiscount,
                 taxRate: itemTaxRate,
-                amount: lineTotal
+                amount: lineTotal,
+                uomId: item.uomId ? parseInt(item.uomId) : null
             };
         });
 
@@ -114,7 +115,8 @@ const createQuotation = async (req, res) => {
                             rate: i.rate,
                             discount: i.discount,
                             taxRate: i.taxRate,
-                            amount: i.amount
+                            amount: i.amount,
+                            uomId: i.uomId
                         }))
                     }
                 },
@@ -189,7 +191,8 @@ const getQuotationById = async (req, res) => {
                 salesquotationitem: {
                     include: {
                         product: true,
-                        service: true
+                        service: true,
+                        uom: true
                     }
                 },
                 customer: true
@@ -284,7 +287,8 @@ const updateQuotation = async (req, res) => {
                 rate: itemRate,
                 discount: itemDiscount,
                 taxRate: itemTaxRate,
-                amount: lineTotal
+                amount: lineTotal,
+                uomId: item.uomId ? parseInt(item.uomId) : null
             };
         });
 
@@ -328,7 +332,8 @@ const updateQuotation = async (req, res) => {
                             rate: i.rate,
                             discount: i.discount,
                             taxRate: i.taxRate,
-                            amount: i.amount
+                            amount: i.amount,
+                            uomId: i.uomId
                         }))
                     }
                 }
@@ -340,7 +345,16 @@ const updateQuotation = async (req, res) => {
 
         const updated = await prisma.salesquotation.findFirst({
             where: { id: parseInt(id), companyId: parseInt(companyId) },
-            include: { salesquotationitem: true, customer: true }
+            include: {
+                salesquotationitem: {
+                    include: {
+                        product: true,
+                        service: true,
+                        uom: true
+                    }
+                },
+                customer: true
+            }
         });
 
         res.status(200).json({ success: true, data: updated });

@@ -75,7 +75,8 @@ const createOrder = async (req, res) => {
                 rate: itemRate,
                 discount: itemDiscount,
                 taxRate: itemTaxRate,
-                amount: lineTotal
+                amount: lineTotal,
+                uomId: item.uomId ? parseInt(item.uomId) : null
             };
         });
 
@@ -129,7 +130,8 @@ const createOrder = async (req, res) => {
                             rate: i.rate,
                             discount: i.discount,
                             taxRate: i.taxRate,
-                            amount: i.amount
+                            amount: i.amount,
+                            uomId: i.uomId
                         }))
                     }
                 },
@@ -237,7 +239,8 @@ const getOrderById = async (req, res) => {
                 salesorderitem: {
                     include: {
                         product: true,
-                        service: true
+                        service: true,
+                        uom: true
                     }
                 },
                 customer: true,
@@ -333,7 +336,8 @@ const updateOrder = async (req, res) => {
                 rate: itemRate,
                 discount: itemDiscount,
                 taxRate: itemTaxRate,
-                amount: lineTotal
+                amount: lineTotal,
+                uomId: item.uomId ? parseInt(item.uomId) : null
             };
         });
 
@@ -389,7 +393,8 @@ const updateOrder = async (req, res) => {
                             rate: i.rate,
                             discount: i.discount,
                             taxRate: i.taxRate,
-                            amount: i.amount
+                            amount: i.amount,
+                            uomId: i.uomId
                         }))
                     }
                 }
@@ -398,7 +403,16 @@ const updateOrder = async (req, res) => {
 
         const updated = await prisma.salesorder.findFirst({
             where: { id: parseInt(id), companyId: parseInt(companyId) },
-            include: { salesorderitem: true, customer: true }
+            include: {
+                salesorderitem: {
+                    include: {
+                        product: true,
+                        service: true,
+                        uom: true
+                    }
+                },
+                customer: true
+            }
         });
 
         res.status(200).json({ success: true, data: updated });

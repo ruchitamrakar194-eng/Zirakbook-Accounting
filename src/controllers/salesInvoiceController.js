@@ -713,7 +713,8 @@ const getInvoices = async (req, res) => {
                         include: {
                             product: true,
                             service: true,
-                            warehouse: true
+                            warehouse: true,
+                            uom: true
                         }
                     },
                     salesorder: true,
@@ -841,7 +842,8 @@ const getInvoiceById = async (req, res) => {
                     include: {
                         product: true,
                         service: true,
-                        warehouse: true
+                        warehouse: true,
+                        uom: true
                     }
                 },
                 customer: true,
@@ -1148,7 +1150,17 @@ const updateInvoice = async (req, res) => {
                         create: invoiceItemsData
                     } : undefined
                 },
-                include: { customer: { include: { ledger: true } } }
+                include: {
+                    customer: { include: { ledger: true } },
+                    invoiceitem: {
+                        include: {
+                            product: true,
+                            service: true,
+                            warehouse: true,
+                            uom: true
+                        }
+                    }
+                }
             });
 
             // D. Apply new stock if items changed
@@ -1619,7 +1631,8 @@ const getPublicInvoiceById = async (req, res) => {
                     include: {
                         product: true,
                         service: true,
-                        warehouse: true
+                        warehouse: true,
+                        uom: true
                     }
                 },
                 customer: true,

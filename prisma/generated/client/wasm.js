@@ -860,7 +860,8 @@ exports.Prisma.SalesorderitemScalarFieldEnum = {
   taxRate: 'taxRate',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
-  warehouseId: 'warehouseId'
+  warehouseId: 'warehouseId',
+  uomId: 'uomId'
 };
 
 exports.Prisma.SalesquotationScalarFieldEnum = {
@@ -906,7 +907,8 @@ exports.Prisma.SalesquotationitemScalarFieldEnum = {
   taxRate: 'taxRate',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
-  warehouseId: 'warehouseId'
+  warehouseId: 'warehouseId',
+  uomId: 'uomId'
 };
 
 exports.Prisma.SalesreturnScalarFieldEnum = {

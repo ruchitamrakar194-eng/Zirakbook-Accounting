@@ -70,7 +70,8 @@ const createOrder = async (req, res) => {
                 rate: itemRate,
                 discount: itemDiscount,
                 taxRate: itemTaxRate,
-                amount: lineTotal
+                amount: lineTotal,
+                uomId: item.uomId ? parseInt(item.uomId) : null
             };
         });
 
@@ -108,12 +109,19 @@ const createOrder = async (req, res) => {
                             rate: i.rate,
                             discount: i.discount,
                             taxRate: i.taxRate,
-                            amount: i.amount
+                            amount: i.amount,
+                            uomId: i.uomId
                         }))
                     }
                 },
                 include: {
-                    purchaseorderitem: true,
+                    purchaseorderitem: {
+                        include: {
+                            product: true,
+                            warehouse: true,
+                            uom: true
+                        }
+                    },
                     vendor: true
                 }
             });
@@ -147,7 +155,8 @@ const getOrders = async (req, res) => {
                 purchaseorderitem: {
                     include: {
                         product: true,
-                        warehouse: true
+                        warehouse: true,
+                        uom: true
                     }
                 },
                 goodsreceiptnote: true,
@@ -174,7 +183,8 @@ const getOrderById = async (req, res) => {
                 purchaseorderitem: {
                     include: {
                         product: true,
-                        warehouse: true
+                        warehouse: true,
+                        uom: true
                     }
                 },
                 vendor: true,
@@ -261,12 +271,14 @@ const updateOrder = async (req, res) => {
 
             return {
                 productId: item.productId ? parseInt(item.productId) : null,
+                warehouseId: item.warehouseId ? parseInt(item.warehouseId) : null,
                 description: item.description,
                 quantity: itemQty,
                 rate: itemRate,
                 discount: itemDiscount,
                 taxRate: itemTaxRate,
-                amount: lineTotal
+                amount: lineTotal,
+                uomId: item.uomId ? parseInt(item.uomId) : null
             };
         });
 
@@ -304,12 +316,14 @@ const updateOrder = async (req, res) => {
                     purchaseorderitem: {
                         create: orderItems.map(i => ({
                             productId: i.productId,
+                            warehouseId: i.warehouseId,
                             description: i.description,
                             quantity: i.quantity,
                             rate: i.rate,
                             discount: i.discount,
                             taxRate: i.taxRate,
-                            amount: i.amount
+                            amount: i.amount,
+                            uomId: i.uomId
                         }))
                     }
                 }
@@ -318,7 +332,16 @@ const updateOrder = async (req, res) => {
 
         const updated = await prisma.purchaseorder.findFirst({
             where: { id: parseInt(id) },
-            include: { purchaseorderitem: true, vendor: true }
+            include: {
+                purchaseorderitem: {
+                    include: {
+                        product: true,
+                        warehouse: true,
+                        uom: true
+                    }
+                },
+                vendor: true
+            }
         });
 
         res.status(200).json({ success: true, data: updated });

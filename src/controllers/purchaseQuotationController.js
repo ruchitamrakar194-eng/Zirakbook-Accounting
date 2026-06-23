@@ -71,7 +71,8 @@ const createQuotation = async (req, res) => {
                 rate: itemRate,
                 discount: itemDiscount,
                 taxRate: itemTaxRate,
-                amount: lineTotal
+                amount: lineTotal,
+                uomId: item.uomId ? parseInt(item.uomId) : null
             };
         });
 
@@ -111,12 +112,19 @@ const createQuotation = async (req, res) => {
                             rate: i.rate,
                             discount: i.discount,
                             taxRate: i.taxRate,
-                            amount: i.amount
+                            amount: i.amount,
+                            uomId: i.uomId
                         }))
                     }
                 },
                 include: {
-                    purchasequotationitem: true,
+                    purchasequotationitem: {
+                        include: {
+                            product: true,
+                            warehouse: true,
+                            uom: true
+                        }
+                    },
                     vendor: true
                 }
             });
@@ -140,7 +148,13 @@ const getQuotations = async (req, res) => {
             where: { companyId: parseInt(companyId) },
             include: {
                 vendor: { select: { name: true, email: true, phone: true } },
-                purchasequotationitem: true,
+                purchasequotationitem: {
+                    include: {
+                        product: true,
+                        warehouse: true,
+                        uom: true
+                    }
+                },
                 purchaseorder: true
             },
             orderBy: { createdAt: 'desc' }
@@ -163,7 +177,8 @@ const getQuotationById = async (req, res) => {
                 purchasequotationitem: {
                     include: {
                         product: true,
-                        warehouse: true
+                        warehouse: true,
+                        uom: true
                     }
                 },
                 vendor: true,
@@ -255,7 +270,8 @@ const updateQuotation = async (req, res) => {
                 rate: itemRate,
                 discount: itemDiscount,
                 taxRate: itemTaxRate,
-                amount: lineTotal
+                amount: lineTotal,
+                uomId: item.uomId ? parseInt(item.uomId) : null
             };
         });
 
@@ -302,7 +318,8 @@ const updateQuotation = async (req, res) => {
                             rate: i.rate,
                             discount: i.discount,
                             taxRate: i.taxRate,
-                            amount: i.amount
+                            amount: i.amount,
+                            uomId: i.uomId
                         }))
                     }
                 }
@@ -311,7 +328,16 @@ const updateQuotation = async (req, res) => {
 
         const updated = await prisma.purchasequotation.findFirst({
             where: { id: parseInt(id) },
-            include: { purchasequotationitem: true, vendor: true }
+            include: {
+                purchasequotationitem: {
+                    include: {
+                        product: true,
+                        warehouse: true,
+                        uom: true
+                    }
+                },
+                vendor: true
+            }
         });
 
         res.status(200).json({ success: true, data: updated });

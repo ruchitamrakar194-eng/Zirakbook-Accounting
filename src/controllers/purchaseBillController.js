@@ -165,7 +165,15 @@ const createBill = async (req, res) => {
                         }))
                     }
                 },
-                include: { purchasebillitem: true }
+                include: {
+                    purchasebillitem: {
+                        include: {
+                            product: true,
+                            warehouse: true,
+                            uom: true
+                        }
+                    }
+                }
             });
 
             // Process Advance Adjustments if provided
@@ -475,7 +483,8 @@ const getBills = async (req, res) => {
                 purchasebillitem: {
                     include: {
                         product: true,
-                        warehouse: true
+                        warehouse: true,
+                        uom: true
                     }
                 },
                 purchaseorder: true,
@@ -547,7 +556,8 @@ const getBillById = async (req, res) => {
                 purchasebillitem: {
                     include: {
                         product: true,
-                        warehouse: true
+                        warehouse: true,
+                        uom: true
                     }
                 },
                 purchaseorder: true,
@@ -1330,7 +1340,8 @@ const updateBill = async (req, res) => {
                     purchasebillitem: {
                         include: {
                             product: true,
-                            warehouse: true
+                            warehouse: true,
+                            uom: true
                         }
                     }
                 }

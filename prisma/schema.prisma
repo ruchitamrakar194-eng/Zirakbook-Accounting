@@ -1,4 +1,3 @@
-
 generator client {
   provider      = "prisma-client-js"
   binaryTargets = ["native", "debian-openssl-3.0.x"]
@@ -93,93 +92,93 @@ model category {
 }
 
 model company {
-  id                   Int                    @id @default(autoincrement())
-  name                 String
-  email                String                 @unique(map: "Company_email_key")
-  logo                 String?                @db.LongText
-  startDate            DateTime?
-  endDate              DateTime?
-  invoiceTemplate      String                 @default("New York")
-  invoiceColor         String                 @default("#000000")
-  showQrCode           Boolean                @default(true)
-  invoiceLogo          String?                @db.LongText
-  planName             String?
-  planId               Int?
-  planType             String?
-  phone                String?
-  website              String?
-  address              String?
-  city                 String?
-  state                String?
-  zip                  String?
-  country              String?
-  currency             String?                @default("USD")
-  bankName             String?
-  accountHolder        String?
-  accountNumber        String?
-  ifsc                 String?
-  terms                String?                @db.Text
-  termsInvoice         String?                @db.Text
-  termsReceipt         String?                @db.Text
-  termsPurchase        String?                @db.Text
-  termsSalesOrder      String?                @db.Text
-  termsQuotation       String?                @db.Text
-  termsCreditNote      String?                @db.Text
-  notes                String?                @db.Text
-  createdAt            DateTime               @default(now())
-  updatedAt            DateTime               @default(now()) @updatedAt
-  inventoryConfig      String?                @db.LongText
-  invoiceTableHeaders  String?                @db.LongText
-  invoiceLabels        String?                @db.LongText
-  receiptTemplate      String?                @default("New York")
-  receiptColor         String?                @default("#004aad")
-  receiptLabels        String?                @db.LongText
-  receiptTableHeaders  String?                @db.LongText
-  paymentTemplate      String?                @default("New York")
-  paymentColor         String?                @default("#004aad")
-  paymentLabels        String?                @db.LongText
-  paymentTableHeaders  String?                @db.LongText
-  customFieldsConfig   String?                @db.LongText
-  documentTitles       String?                @db.LongText
-  accountgroup         accountgroup[]
-  accountsubgroup      accountsubgroup[]
-  bankaccount          bankaccount[]
-  banktransaction      banktransaction[]
-  category             category[]
-  plan                 plan?                  @relation(fields: [planId], references: [id], map: "Company_planId_fkey")
-  customer             customer[]
-  deliverychallan      deliverychallan[]
-  expenseentry         expenseentry[]
-  goodsreceiptnote     goodsreceiptnote[]
-  incomeentry          incomeentry[]
-  inventoryadjustment  inventoryadjustment[]
-  inventorytransaction inventorytransaction[]
-  invoice              invoice[]
-  journalentry         journalentry[]
-  ledger               ledger[]
-  passwordrequest      passwordrequest[]
-  payment              payment[]
-  posinvoice           posinvoice[]
-  product              product[]
-  purchasebill         purchasebill[]
-  purchaseorder        purchaseorder[]
-  purchasequotation    purchasequotation[]
-  purchasereturn       purchasereturn[]
-  receipt              receipt[]
-  salesorder           salesorder[]
-  salesquotation       salesquotation[]
-  salesreturn          salesreturn[]
-  service              service[]
-  stocktransfer        stocktransfer[]
-  transaction          transaction[]
-  uom                  uom[]
-  user                 user[]
-  vendor               vendor[]
-  warehouse            warehouse[]
-  voucher              voucher[]
-  role                 role[]
+  id                    Int                     @id @default(autoincrement())
+  name                  String
+  email                 String                  @unique(map: "Company_email_key")
+  logo                  String?                 @db.LongText
+  startDate             DateTime?
+  endDate               DateTime?
+  invoiceTemplate       String                  @default("New York")
+  invoiceColor          String                  @default("#000000")
+  showQrCode            Boolean                 @default(true)
+  invoiceLogo           String?                 @db.LongText
+  planName              String?
+  planId                Int?
+  planType              String?
+  phone                 String?
+  website               String?
+  address               String?
+  city                  String?
+  state                 String?
+  zip                   String?
+  country               String?
+  currency              String?                 @default("USD")
+  bankName              String?
+  accountHolder         String?
+  accountNumber         String?
+  ifsc                  String?
+  terms                 String?                 @db.Text
+  termsInvoice          String?                 @db.Text
+  termsReceipt          String?                 @db.Text
+  termsPurchase         String?                 @db.Text
+  termsSalesOrder       String?                 @db.Text
+  termsQuotation        String?                 @db.Text
+  termsCreditNote       String?                 @db.Text
+  notes                 String?                 @db.Text
+  createdAt             DateTime                @default(now())
+  updatedAt             DateTime                @default(now()) @updatedAt
+  inventoryConfig       String?                 @db.LongText
+  invoiceTableHeaders   String?                 @db.LongText
+  invoiceLabels         String?                 @db.LongText
+  receiptTemplate       String?                 @default("New York")
+  receiptColor          String?                 @default("#004aad")
+  receiptLabels         String?                 @db.LongText
+  receiptTableHeaders   String?                 @db.LongText
+  paymentTemplate       String?                 @default("New York")
+  paymentColor          String?                 @default("#004aad")
+  paymentLabels         String?                 @db.LongText
+  paymentTableHeaders   String?                 @db.LongText
+  customFieldsConfig    String?                 @db.LongText
+  documentTitles        String?                 @db.LongText
+  accountgroup          accountgroup[]
+  accountsubgroup       accountsubgroup[]
+  bankaccount           bankaccount[]
+  banktransaction       banktransaction[]
+  category              category[]
+  plan                  plan?                   @relation(fields: [planId], references: [id], map: "Company_planId_fkey")
+  customer              customer[]
+  deliverychallan       deliverychallan[]
+  expenseentry          expenseentry[]
+  goodsreceiptnote      goodsreceiptnote[]
+  incomeentry           incomeentry[]
+  inventoryadjustment   inventoryadjustment[]
+  inventorytransaction  inventorytransaction[]
+  invoice               invoice[]
+  journalentry          journalentry[]
+  ledger                ledger[]
+  passwordrequest       passwordrequest[]
+  payment               payment[]
+  posinvoice            posinvoice[]
+  product               product[]
+  purchasebill          purchasebill[]
+  purchaseorder         purchaseorder[]
+  purchasequotation     purchasequotation[]
+  purchasereturn        purchasereturn[]
+  receipt               receipt[]
+  salesorder            salesorder[]
+  salesquotation        salesquotation[]
+  salesreturn           salesreturn[]
+  service               service[]
+  stocktransfer         stocktransfer[]
+  transaction           transaction[]
+  uom                   uom[]
+  user                  user[]
+  vendor                vendor[]
+  warehouse             warehouse[]
+  voucher               voucher[]
+  role                  role[]
   transaction_numbering transaction_numbering[]
-  auditlog             auditlog[]
+  auditlog              auditlog[]
 
   @@index([planId], map: "Company_planId_fkey")
 }
@@ -301,17 +300,17 @@ model deliverychallanitem {
 }
 
 model expenseentry {
-  id          Int                      @id @default(autoincrement())
-  date        DateTime                 @default(now())
-  expenseType expenseentry_expenseType
-  amount      Float
-  paymentMode expenseentry_paymentMode
-  description String?                  @db.Text
-  customFields String?                 @db.Text
-  companyId   Int
-  createdAt   DateTime                 @default(now())
-  updatedAt   DateTime                 @default(now()) @updatedAt
-  company     company                  @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "ExpenseEntry_companyId_fkey")
+  id           Int                      @id @default(autoincrement())
+  date         DateTime                 @default(now())
+  expenseType  expenseentry_expenseType
+  amount       Float
+  paymentMode  expenseentry_paymentMode
+  description  String?                  @db.Text
+  customFields String?                  @db.Text
+  companyId    Int
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @default(now()) @updatedAt
+  company      company                  @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "ExpenseEntry_companyId_fkey")
 
   @@index([companyId], map: "ExpenseEntry_companyId_fkey")
 }
@@ -358,17 +357,17 @@ model goodsreceiptnoteitem {
 }
 
 model incomeentry {
-  id          Int                     @id @default(autoincrement())
-  date        DateTime                @default(now())
-  incomeType  incomeentry_incomeType
-  amount      Float
-  paymentMode incomeentry_paymentMode
-  description String?                 @db.Text
-  customFields String?                @db.Text
-  companyId   Int
-  createdAt   DateTime                @default(now())
-  updatedAt   DateTime                @default(now()) @updatedAt
-  company     company                 @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "IncomeEntry_companyId_fkey")
+  id           Int                     @id @default(autoincrement())
+  date         DateTime                @default(now())
+  incomeType   incomeentry_incomeType
+  amount       Float
+  paymentMode  incomeentry_paymentMode
+  description  String?                 @db.Text
+  customFields String?                 @db.Text
+  companyId    Int
+  createdAt    DateTime                @default(now())
+  updatedAt    DateTime                @default(now()) @updatedAt
+  company      company                 @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "IncomeEntry_companyId_fkey")
 
   @@index([companyId], map: "IncomeEntry_companyId_fkey")
 }
@@ -440,51 +439,51 @@ model inventorytransaction {
 }
 
 model invoice {
-  id                Int              @id @default(autoincrement())
-  invoiceNumber     String
-  date              DateTime         @default(now())
-  dueDate           DateTime?
-  customerId        Int
-  companyId         Int
-  subtotal          Float
-  discountAmount    Float            @default(0)
-  taxAmount         Float            @default(0)
-  totalAmount       Float
-  paidAmount        Float            @default(0)
-  balanceAmount     Float
-  currency          String?          @default("USD")
-  exchangeRate      Float?           @default(1.0)
-  status            invoice_status   @default(UNPAID)
-  salesOrderId      Int?
-  notes             String?          @db.Text
-  createdAt         DateTime         @default(now())
-  overallDiscount   Float            @default(0)
-  overallDiscountType String         @default("percentage")
-  updatedAt         DateTime         @default(now()) @updatedAt
-  deliveryChallanId Int?
-  billingName       String?
-  billingAddress    String?          @db.Text
-  billingCity       String?
-  billingState      String?
-  billingZipCode    String?
-  billingCountry    String?
-  shippingName      String?
-  shippingAddress   String?          @db.Text
-  shippingCity      String?
-  shippingState     String?
-  shippingZipCode   String?
-  shippingCountry   String?
-  customFields      String?          @db.Text
-  company           company          @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "Invoice_companyId_fkey")
-  customer          customer         @relation(fields: [customerId], references: [id], onDelete: Cascade, map: "Invoice_customerId_fkey")
-  deliverychallan   deliverychallan? @relation(fields: [deliveryChallanId], references: [id], onDelete: Cascade, map: "Invoice_deliveryChallanId_fkey")
-  salesorder        salesorder?      @relation(fields: [salesOrderId], references: [id], onDelete: Cascade, map: "Invoice_salesOrderId_fkey")
-  invoiceitem       invoiceitem[]
-  receipt           receipt[]
-  salesreturn       salesreturn[]
-  transaction       transaction[]
+  id                    Int                        @id @default(autoincrement())
+  invoiceNumber         String
+  date                  DateTime                   @default(now())
+  dueDate               DateTime?
+  customerId            Int
+  companyId             Int
+  subtotal              Float
+  discountAmount        Float                      @default(0)
+  taxAmount             Float                      @default(0)
+  totalAmount           Float
+  paidAmount            Float                      @default(0)
+  balanceAmount         Float
+  currency              String?                    @default("USD")
+  exchangeRate          Float?                     @default(1.0)
+  status                invoice_status             @default(UNPAID)
+  salesOrderId          Int?
+  notes                 String?                    @db.Text
+  createdAt             DateTime                   @default(now())
+  overallDiscount       Float                      @default(0)
+  overallDiscountType   String                     @default("percentage")
+  updatedAt             DateTime                   @default(now()) @updatedAt
+  deliveryChallanId     Int?
+  billingName           String?
+  billingAddress        String?                    @db.Text
+  billingCity           String?
+  billingState          String?
+  billingZipCode        String?
+  billingCountry        String?
+  shippingName          String?
+  shippingAddress       String?                    @db.Text
+  shippingCity          String?
+  shippingState         String?
+  shippingZipCode       String?
+  shippingCountry       String?
+  customFields          String?                    @db.Text
+  company               company                    @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "Invoice_companyId_fkey")
+  customer              customer                   @relation(fields: [customerId], references: [id], onDelete: Cascade, map: "Invoice_customerId_fkey")
+  deliverychallan       deliverychallan?           @relation(fields: [deliveryChallanId], references: [id], onDelete: Cascade, map: "Invoice_deliveryChallanId_fkey")
+  salesorder            salesorder?                @relation(fields: [salesOrderId], references: [id], onDelete: Cascade, map: "Invoice_salesOrderId_fkey")
+  invoiceitem           invoiceitem[]
+  receipt               receipt[]
+  salesreturn           salesreturn[]
+  transaction           transaction[]
   inventory_consumption inventory_consumption[]
-  allocations       receiptinvoiceallocation[]
+  allocations           receiptinvoiceallocation[]
 
   @@unique([companyId, invoiceNumber], map: "Invoice_companyId_invoiceNumber_key")
   @@index([customerId], map: "Invoice_customerId_fkey")
@@ -590,9 +589,9 @@ model passwordrequest {
 }
 
 model payment {
-  id                Int                 @id @default(autoincrement())
+  id                Int                     @id @default(autoincrement())
   paymentNumber     String
-  date              DateTime            @default(now())
+  date              DateTime                @default(now())
   vendorId          Int
   purchaseBillId    Int?
   amount            Float
@@ -600,17 +599,17 @@ model payment {
   referenceNumber   String?
   companyId         Int
   cashBankAccountId Int?
-  notes             String?             @db.Text
-  createdAt         DateTime            @default(now())
-  updatedAt         DateTime            @default(now()) @updatedAt
-  company           company             @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "Payment_companyId_fkey")
-  purchasebill      purchasebill?       @relation(fields: [purchaseBillId], references: [id], map: "Payment_purchaseBillId_fkey")
-  vendor            vendor              @relation(fields: [vendorId], references: [id], map: "Payment_vendorId_fkey")
-  bankLedger        ledger?             @relation("Payment_CashBankAccount", fields: [cashBankAccountId], references: [id], map: "Payment_cashBankAccountId_fkey")
-  discountAmount    Float               @default(0)
+  notes             String?                 @db.Text
+  createdAt         DateTime                @default(now())
+  updatedAt         DateTime                @default(now()) @updatedAt
+  company           company                 @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "Payment_companyId_fkey")
+  purchasebill      purchasebill?           @relation(fields: [purchaseBillId], references: [id], map: "Payment_purchaseBillId_fkey")
+  vendor            vendor                  @relation(fields: [vendorId], references: [id], map: "Payment_vendorId_fkey")
+  bankLedger        ledger?                 @relation("Payment_CashBankAccount", fields: [cashBankAccountId], references: [id], map: "Payment_cashBankAccountId_fkey")
+  discountAmount    Float                   @default(0)
   discountLedgerId  Int?
-  customFields      String?             @db.Text
-  discountLedger    ledger?             @relation("Payment_DiscountLedger", fields: [discountLedgerId], references: [id], map: "Payment_discountLedgerId_fkey")
+  customFields      String?                 @db.Text
+  discountLedger    ledger?                 @relation("Payment_DiscountLedger", fields: [discountLedgerId], references: [id], map: "Payment_discountLedgerId_fkey")
   transaction       transaction[]
   allocations       paymentbillallocation[]
 
@@ -780,51 +779,51 @@ model product {
 }
 
 model purchasebill {
-  id               Int                 @id @default(autoincrement())
-  billNumber       String
-  date             DateTime            @default(now())
-  dueDate          DateTime?
-  vendorId         Int
-  companyId        Int
-  subtotal         Float
-  overallDiscount  Float               @default(0)
-  overallDiscountType String            @default("percentage")
-  discountAmount   Float               @default(0)
-  taxAmount        Float               @default(0)
-  totalAmount      Float
-  paidAmount       Float               @default(0)
-  balanceAmount    Float
-  currency         String?             @default("USD")
-  exchangeRate     Float?              @default(1.0)
-  status           purchasebill_status @default(UNPAID)
-  notes            String?             @db.Text
-  createdAt        DateTime            @default(now())
-  updatedAt        DateTime            @default(now()) @updatedAt
-  grnId            Int?
-  purchaseOrderId  Int?
-  billingName      String?
-  billingAddress   String?           @db.Text
-  billingCity      String?
-  billingState     String?
-  billingZipCode   String?
-  billingCountry   String?
-  shippingName     String?
-  shippingAddress  String?           @db.Text
-  shippingCity     String?
-  shippingState    String?
-  shippingZipCode  String?
-  shippingCountry  String?
-  customFields     String?             @db.Text
-  payment          payment[]
-  company          company             @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "PurchaseBill_companyId_fkey")
-  goodsreceiptnote goodsreceiptnote?   @relation(fields: [grnId], references: [id], onDelete: Cascade, map: "PurchaseBill_grnId_fkey")
-  purchaseorder    purchaseorder?      @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade, map: "PurchaseBill_purchaseOrderId_fkey")
-  vendor           vendor              @relation(fields: [vendorId], references: [id], onDelete: Cascade, map: "PurchaseBill_vendorId_fkey")
-  purchasebillitem purchasebillitem[]
-  purchasereturn   purchasereturn[]
-  transaction      transaction[]
-  inventory_batch  inventory_batch[]
-  allocations      paymentbillallocation[]
+  id                  Int                     @id @default(autoincrement())
+  billNumber          String
+  date                DateTime                @default(now())
+  dueDate             DateTime?
+  vendorId            Int
+  companyId           Int
+  subtotal            Float
+  overallDiscount     Float                   @default(0)
+  overallDiscountType String                  @default("percentage")
+  discountAmount      Float                   @default(0)
+  taxAmount           Float                   @default(0)
+  totalAmount         Float
+  paidAmount          Float                   @default(0)
+  balanceAmount       Float
+  currency            String?                 @default("USD")
+  exchangeRate        Float?                  @default(1.0)
+  status              purchasebill_status     @default(UNPAID)
+  notes               String?                 @db.Text
+  createdAt           DateTime                @default(now())
+  updatedAt           DateTime                @default(now()) @updatedAt
+  grnId               Int?
+  purchaseOrderId     Int?
+  billingName         String?
+  billingAddress      String?                 @db.Text
+  billingCity         String?
+  billingState        String?
+  billingZipCode      String?
+  billingCountry      String?
+  shippingName        String?
+  shippingAddress     String?                 @db.Text
+  shippingCity        String?
+  shippingState       String?
+  shippingZipCode     String?
+  shippingCountry     String?
+  customFields        String?                 @db.Text
+  payment             payment[]
+  company             company                 @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "PurchaseBill_companyId_fkey")
+  goodsreceiptnote    goodsreceiptnote?       @relation(fields: [grnId], references: [id], onDelete: Cascade, map: "PurchaseBill_grnId_fkey")
+  purchaseorder       purchaseorder?          @relation(fields: [purchaseOrderId], references: [id], onDelete: Cascade, map: "PurchaseBill_purchaseOrderId_fkey")
+  vendor              vendor                  @relation(fields: [vendorId], references: [id], onDelete: Cascade, map: "PurchaseBill_vendorId_fkey")
+  purchasebillitem    purchasebillitem[]
+  purchasereturn      purchasereturn[]
+  transaction         transaction[]
+  inventory_batch     inventory_batch[]
+  allocations         paymentbillallocation[]
 
   @@unique([companyId, billNumber], map: "PurchaseBill_companyId_billNumber_key")
   @@index([grnId], map: "PurchaseBill_grnId_fkey")
@@ -858,42 +857,42 @@ model purchasebillitem {
 }
 
 model purchaseorder {
-  id                Int                  @id @default(autoincrement())
-  orderNumber       String
-  date              DateTime             @default(now())
-  expectedDate      DateTime?
-  vendorId          Int
-  quotationId       Int?                 @unique(map: "PurchaseOrder_quotationId_key")
-  companyId         Int
-  subtotal          Float
-  discountAmount    Float                @default(0)
-  taxAmount         Float                @default(0)
-  totalAmount       Float
-  status            purchaseorder_status @default(PENDING)
-  notes             String?              @db.Text
-  overallDiscount   Float                @default(0)
-  overallDiscountType String             @default("percentage")
-  billingName      String?
-  billingAddress   String?           @db.Text
-  billingCity      String?
-  billingState     String?
-  billingZipCode   String?
-  billingCountry   String?
-  shippingName     String?
-  shippingAddress  String?           @db.Text
-  shippingCity     String?
-  shippingState    String?
-  shippingZipCode  String?
-  shippingCountry  String?
-  customFields     String?             @db.Text
-  createdAt         DateTime             @default(now())
-  updatedAt         DateTime             @default(now()) @updatedAt
-  goodsreceiptnote  goodsreceiptnote[]
-  purchasebill      purchasebill[]
-  company           company              @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "PurchaseOrder_companyId_fkey")
-  purchasequotation purchasequotation?   @relation(fields: [quotationId], references: [id], map: "PurchaseOrder_quotationId_fkey")
-  vendor            vendor               @relation(fields: [vendorId], references: [id], map: "PurchaseOrder_vendorId_fkey")
-  purchaseorderitem purchaseorderitem[]
+  id                  Int                  @id @default(autoincrement())
+  orderNumber         String
+  date                DateTime             @default(now())
+  expectedDate        DateTime?
+  vendorId            Int
+  quotationId         Int?                 @unique(map: "PurchaseOrder_quotationId_key")
+  companyId           Int
+  subtotal            Float
+  discountAmount      Float                @default(0)
+  taxAmount           Float                @default(0)
+  totalAmount         Float
+  status              purchaseorder_status @default(PENDING)
+  notes               String?              @db.Text
+  overallDiscount     Float                @default(0)
+  overallDiscountType String               @default("percentage")
+  billingName         String?
+  billingAddress      String?              @db.Text
+  billingCity         String?
+  billingState        String?
+  billingZipCode      String?
+  billingCountry      String?
+  shippingName        String?
+  shippingAddress     String?              @db.Text
+  shippingCity        String?
+  shippingState       String?
+  shippingZipCode     String?
+  shippingCountry     String?
+  customFields        String?              @db.Text
+  createdAt           DateTime             @default(now())
+  updatedAt           DateTime             @default(now()) @updatedAt
+  goodsreceiptnote    goodsreceiptnote[]
+  purchasebill        purchasebill[]
+  company             company              @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "PurchaseOrder_companyId_fkey")
+  purchasequotation   purchasequotation?   @relation(fields: [quotationId], references: [id], map: "PurchaseOrder_quotationId_fkey")
+  vendor              vendor               @relation(fields: [vendorId], references: [id], map: "PurchaseOrder_vendorId_fkey")
+  purchaseorderitem   purchaseorderitem[]
 
   @@unique([companyId, orderNumber], map: "PurchaseOrder_companyId_orderNumber_key")
   @@index([vendorId], map: "PurchaseOrder_vendorId_fkey")
@@ -915,6 +914,8 @@ model purchaseorderitem {
   product       product?      @relation(fields: [productId], references: [id], map: "PurchaseOrderItem_productId_fkey")
   warehouse     warehouse?    @relation(fields: [warehouseId], references: [id], map: "PurchaseOrderItem_warehouseId_fkey")
   warehouseId   Int?
+  uomId         Int?
+  uom           uom?          @relation(fields: [uomId], references: [id], onDelete: Restrict, map: "PurchaseOrderItem_uomId_fkey")
 
   @@index([orderId], map: "PurchaseOrderItem_orderId_fkey")
   @@index([productId], map: "PurchaseOrderItem_productId_fkey")
@@ -964,9 +965,11 @@ model purchasequotationitem {
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @default(now()) @updatedAt
   warehouseId       Int?
+  uomId             Int?
   product           product?          @relation(fields: [productId], references: [id], map: "PurchaseQuotationItem_productId_fkey")
   purchasequotation purchasequotation @relation(fields: [quotationId], references: [id], onDelete: Cascade, map: "PurchaseQuotationItem_quotationId_fkey")
   warehouse         warehouse?        @relation(fields: [warehouseId], references: [id], map: "PurchaseQuotationItem_warehouseId_fkey")
+  uom               uom?              @relation(fields: [uomId], references: [id], onDelete: Restrict, map: "PurchaseQuotationItem_uomId_fkey")
 
   @@index([productId], map: "PurchaseQuotationItem_productId_fkey")
   @@index([quotationId], map: "PurchaseQuotationItem_quotationId_fkey")
@@ -1016,29 +1019,29 @@ model purchasereturnitem {
 }
 
 model receipt {
-  id              Int                 @id @default(autoincrement())
-  receiptNumber   String
-  date            DateTime            @default(now())
-  customerId      Int
-  invoiceId       Int?
-  amount          Float
-  paymentMode     receipt_paymentMode
-  referenceNumber String?
-  companyId       Int
+  id                Int                        @id @default(autoincrement())
+  receiptNumber     String
+  date              DateTime                   @default(now())
+  customerId        Int
+  invoiceId         Int?
+  amount            Float
+  paymentMode       receipt_paymentMode
+  referenceNumber   String?
+  companyId         Int
   cashBankAccountId Int?
-  notes           String?             @db.Text
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @default(now()) @updatedAt
-  company         company             @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "Receipt_companyId_fkey")
-  customer        customer            @relation(fields: [customerId], references: [id], map: "Receipt_customerId_fkey")
-  invoice         invoice?            @relation(fields: [invoiceId], references: [id], map: "Receipt_invoiceId_fkey")
-  cashBankAccount ledger?             @relation("Receipt_CashBankAccount", fields: [cashBankAccountId], references: [id], map: "Receipt_cashBankAccountId_fkey")
-  discountAmount    Float               @default(0)
+  notes             String?                    @db.Text
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @default(now()) @updatedAt
+  company           company                    @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "Receipt_companyId_fkey")
+  customer          customer                   @relation(fields: [customerId], references: [id], map: "Receipt_customerId_fkey")
+  invoice           invoice?                   @relation(fields: [invoiceId], references: [id], map: "Receipt_invoiceId_fkey")
+  cashBankAccount   ledger?                    @relation("Receipt_CashBankAccount", fields: [cashBankAccountId], references: [id], map: "Receipt_cashBankAccountId_fkey")
+  discountAmount    Float                      @default(0)
   discountLedgerId  Int?
-  customFields      String?             @db.Text
-  discountLedger    ledger?             @relation("Receipt_DiscountLedger", fields: [discountLedgerId], references: [id], map: "Receipt_discountLedgerId_fkey")
-  transaction     transaction[]
-  allocations     receiptinvoiceallocation[]
+  customFields      String?                    @db.Text
+  discountLedger    ledger?                    @relation("Receipt_DiscountLedger", fields: [discountLedgerId], references: [id], map: "Receipt_discountLedgerId_fkey")
+  transaction       transaction[]
+  allocations       receiptinvoiceallocation[]
 
   @@unique([companyId, receiptNumber], map: "Receipt_companyId_receiptNumber_key")
   @@index([customerId], map: "Receipt_customerId_fkey")
@@ -1046,13 +1049,13 @@ model receipt {
 }
 
 model salesorder {
-  id              Int               @id @default(autoincrement())
-  orderNumber     String
-  date            DateTime          @default(now())
-  expectedDate    DateTime?
-  customerId      Int
-  quotationId     Int?              @unique(map: "SalesOrder_quotationId_key")
-  companyId       Int
+  id                  Int               @id @default(autoincrement())
+  orderNumber         String
+  date                DateTime          @default(now())
+  expectedDate        DateTime?
+  customerId          Int
+  quotationId         Int?              @unique(map: "SalesOrder_quotationId_key")
+  companyId           Int
   subtotal            Float
   discountAmount      Float             @default(0)
   taxAmount           Float             @default(0)
@@ -1060,28 +1063,28 @@ model salesorder {
   overallDiscountType String            @default("percentage")
   totalAmount         Float
   status              salesorder_status @default(PENDING)
-  notes           String?           @db.Text
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @default(now()) @updatedAt
-  deliverychallan deliverychallan[]
-  invoice         invoice[]
-  billingName      String?
-  billingAddress   String?           @db.Text
-  billingCity      String?
-  billingState     String?
-  billingZipCode   String?
-  billingCountry   String?
-  shippingName     String?
-  shippingAddress  String?           @db.Text
-  shippingCity     String?
-  shippingState    String?
-  shippingZipCode  String?
-  shippingCountry  String?
-  customFields     String?           @db.Text
-  company         company           @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "SalesOrder_companyId_fkey")
-  customer        customer          @relation(fields: [customerId], references: [id], map: "SalesOrder_customerId_fkey")
-  salesquotation  salesquotation?   @relation(fields: [quotationId], references: [id], map: "SalesOrder_quotationId_fkey")
-  salesorderitem  salesorderitem[]
+  notes               String?           @db.Text
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @default(now()) @updatedAt
+  deliverychallan     deliverychallan[]
+  invoice             invoice[]
+  billingName         String?
+  billingAddress      String?           @db.Text
+  billingCity         String?
+  billingState        String?
+  billingZipCode      String?
+  billingCountry      String?
+  shippingName        String?
+  shippingAddress     String?           @db.Text
+  shippingCity        String?
+  shippingState       String?
+  shippingZipCode     String?
+  shippingCountry     String?
+  customFields        String?           @db.Text
+  company             company           @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "SalesOrder_companyId_fkey")
+  customer            customer          @relation(fields: [customerId], references: [id], map: "SalesOrder_customerId_fkey")
+  salesquotation      salesquotation?   @relation(fields: [quotationId], references: [id], map: "SalesOrder_quotationId_fkey")
+  salesorderitem      salesorderitem[]
 
   @@unique([companyId, orderNumber], map: "SalesOrder_companyId_orderNumber_key")
   @@index([customerId], map: "SalesOrder_customerId_fkey")
@@ -1101,49 +1104,52 @@ model salesorderitem {
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @default(now()) @updatedAt
   warehouseId Int?
+  uomId       Int?
   salesorder  salesorder @relation(fields: [orderId], references: [id], onDelete: Cascade, map: "SalesOrderItem_orderId_fkey")
   product     product?   @relation(fields: [productId], references: [id], map: "SalesOrderItem_productId_fkey")
   service     service?   @relation(fields: [serviceId], references: [id], map: "SalesOrderItem_serviceId_fkey")
   warehouse   warehouse? @relation(fields: [warehouseId], references: [id], map: "SalesOrderItem_warehouseId_fkey")
+  uom         uom?       @relation(fields: [uomId], references: [id], onDelete: Restrict, map: "SalesOrderItem_uomId_fkey")
 
   @@index([orderId], map: "SalesOrderItem_orderId_fkey")
   @@index([productId], map: "SalesOrderItem_productId_fkey")
   @@index([serviceId], map: "SalesOrderItem_serviceId_fkey")
   @@index([warehouseId], map: "SalesOrderItem_warehouseId_fkey")
+  @@index([uomId], map: "SalesOrderItem_uomId_fkey")
 }
 
 model salesquotation {
-  id                 Int                   @id @default(autoincrement())
-  quotationNumber    String
-  date               DateTime              @default(now())
-  expiryDate         DateTime?
-  customerId         Int
-  companyId          Int
-  subtotal           Float
-  discountAmount     Float                 @default(0)
-  overallDiscount    Float                 @default(0)
-  overallDiscountType String               @default("amount")
-  taxAmount          Float                 @default(0)
-  totalAmount        Float
-  status             salesquotation_status @default(DRAFT)
-  notes              String?               @db.Text
-  createdAt          DateTime              @default(now())
-  updatedAt          DateTime              @default(now()) @updatedAt
-  salesorder         salesorder?
-  billingName        String?
-  billingAddress     String?               @db.Text
-  billingCity        String?
-  billingState       String?
-  billingZipCode     String?
-  shippingName       String?
-  shippingAddress    String?               @db.Text
-  shippingCity       String?
-  shippingState      String?
-  shippingZipCode    String?
-  customFields       String?               @db.Text
-  company            company               @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "SalesQuotation_companyId_fkey")
-  customer           customer              @relation(fields: [customerId], references: [id], map: "SalesQuotation_customerId_fkey")
-  salesquotationitem salesquotationitem[]
+  id                  Int                   @id @default(autoincrement())
+  quotationNumber     String
+  date                DateTime              @default(now())
+  expiryDate          DateTime?
+  customerId          Int
+  companyId           Int
+  subtotal            Float
+  discountAmount      Float                 @default(0)
+  overallDiscount     Float                 @default(0)
+  overallDiscountType String                @default("amount")
+  taxAmount           Float                 @default(0)
+  totalAmount         Float
+  status              salesquotation_status @default(DRAFT)
+  notes               String?               @db.Text
+  createdAt           DateTime              @default(now())
+  updatedAt           DateTime              @default(now()) @updatedAt
+  salesorder          salesorder?
+  billingName         String?
+  billingAddress      String?               @db.Text
+  billingCity         String?
+  billingState        String?
+  billingZipCode      String?
+  shippingName        String?
+  shippingAddress     String?               @db.Text
+  shippingCity        String?
+  shippingState       String?
+  shippingZipCode     String?
+  customFields        String?               @db.Text
+  company             company               @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "SalesQuotation_companyId_fkey")
+  customer            customer              @relation(fields: [customerId], references: [id], map: "SalesQuotation_customerId_fkey")
+  salesquotationitem  salesquotationitem[]
 
   @@unique([companyId, quotationNumber], map: "SalesQuotation_companyId_quotationNumber_key")
   @@index([customerId], map: "SalesQuotation_customerId_fkey")
@@ -1163,15 +1169,18 @@ model salesquotationitem {
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @default(now()) @updatedAt
   warehouseId    Int?
+  uomId          Int?
   product        product?       @relation(fields: [productId], references: [id], map: "SalesQuotationItem_productId_fkey")
   salesquotation salesquotation @relation(fields: [quotationId], references: [id], onDelete: Cascade, map: "SalesQuotationItem_quotationId_fkey")
   service        service?       @relation(fields: [serviceId], references: [id], map: "SalesQuotationItem_serviceId_fkey")
   warehouse      warehouse?     @relation(fields: [warehouseId], references: [id], map: "SalesQuotationItem_warehouseId_fkey")
+  uom            uom?           @relation(fields: [uomId], references: [id], onDelete: Restrict, map: "SalesQuotationItem_uomId_fkey")
 
   @@index([productId], map: "SalesQuotationItem_productId_fkey")
   @@index([quotationId], map: "SalesQuotationItem_quotationId_fkey")
   @@index([serviceId], map: "SalesQuotationItem_serviceId_fkey")
   @@index([warehouseId], map: "SalesQuotationItem_warehouseId_fkey")
+  @@index([uomId], map: "SalesQuotationItem_uomId_fkey")
 }
 
 model salesreturn {
@@ -1340,53 +1349,57 @@ model transaction {
 }
 
 model uom {
-  id              Int               @id @default(autoincrement())
-  category        String
-  unitName        String
-  symbol          String?
-  weightPerUnit   String?
-  uomType         String            @default("Simple") // "Simple" or "Compound"
-  
+  id            Int     @id @default(autoincrement())
+  category      String
+  unitName      String
+  symbol        String?
+  weightPerUnit String?
+  uomType       String  @default("Simple") // "Simple" or "Compound"
+
   // Compound Unit relation (Self-referential)
-  baseUnitId      Int?
-  conversionRate  Float?            // Multiplier, e.g. 24
-  
-  companyId       Int
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @default(now()) @updatedAt
-  
-  company         company           @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "UOM_companyId_fkey")
-  baseUnit        uom?              @relation("uom_conversions", fields: [baseUnitId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "UOM_baseUnitId_fkey")
-  childUnits      uom[]             @relation("uom_conversions")
-  
+  baseUnitId     Int?
+  conversionRate Float? // Multiplier, e.g. 24
+
+  companyId Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+
+  company    company @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "UOM_companyId_fkey")
+  baseUnit   uom?    @relation("uom_conversions", fields: [baseUnitId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "UOM_baseUnitId_fkey")
+  childUnits uom[]   @relation("uom_conversions")
+
   // Product relations
-  product          product[]        @relation("product_base_uom")
-  product_purchase product[]        @relation("product_purchase_uom")
-  product_sales    product[]        @relation("product_sales_uom")
-  service          service[]
-  purchasebillitem purchasebillitem[]
-  invoiceitem      invoiceitem[]
-  posinvoiceitem   posinvoiceitem[]
+  product            product[]            @relation("product_base_uom")
+  product_purchase   product[]            @relation("product_purchase_uom")
+  product_sales      product[]            @relation("product_sales_uom")
+  service            service[]
+  purchasebillitem   purchasebillitem[]
+  invoiceitem        invoiceitem[]
+  posinvoiceitem     posinvoiceitem[]
+  salesorderitem     salesorderitem[]
+  salesquotationitem salesquotationitem[]
+  purchaseorderitem  purchaseorderitem[]
+  purchasequotationitem purchasequotationitem[]
 
   @@unique([companyId, category, unitName], map: "UOM_companyId_category_unitName_key")
   @@index([baseUnitId], map: "UOM_baseUnitId_fkey")
 }
 
 model user {
-  id              Int                    @id @default(autoincrement())
-  name            String
-  email           String                 @unique(map: "User_email_key")
-  password        String
-  role            String                 @default("USER")
-  roleId          Int?
-  loginEnabled    Boolean                @default(true)
-  companyId       Int?
-  avatar          String?                @db.LongText
-  createdAt       DateTime               @default(now())
-  updatedAt       DateTime               @default(now()) @updatedAt
-  passwordrequest passwordrequest[]
-  company         company?               @relation(fields: [companyId], references: [id], map: "User_companyId_fkey")
-  auditlog        auditlog[]
+  id                   Int                    @id @default(autoincrement())
+  name                 String
+  email                String                 @unique(map: "User_email_key")
+  password             String
+  role                 String                 @default("USER")
+  roleId               Int?
+  loginEnabled         Boolean                @default(true)
+  companyId            Int?
+  avatar               String?                @db.LongText
+  createdAt            DateTime               @default(now())
+  updatedAt            DateTime               @default(now()) @updatedAt
+  passwordrequest      passwordrequest[]
+  company              company?               @relation(fields: [companyId], references: [id], map: "User_companyId_fkey")
+  auditlog             auditlog[]
   inventorytransaction inventorytransaction[]
 
   @@index([companyId], map: "User_companyId_fkey")
@@ -1695,18 +1708,18 @@ model voucheritem {
   productName String?
   ledgerName  String?
   ledgerId    Int?
-  description String?    @db.Text
-  quantity    Float      @default(1)
+  description String?  @db.Text
+  quantity    Float    @default(1)
   rate        Float?
   amount      Float
   debit       Float?
   credit      Float?
-  narration   String?    @db.Text
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @default(now()) @updatedAt
-  voucher     voucher    @relation(fields: [voucherId], references: [id], onDelete: Cascade)
-  product     product?   @relation(fields: [productId], references: [id], onDelete: Cascade)
-  ledger      ledger?    @relation(fields: [ledgerId], references: [id], onDelete: Cascade)
+  narration   String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+  voucher     voucher  @relation(fields: [voucherId], references: [id], onDelete: Cascade)
+  product     product? @relation(fields: [productId], references: [id], onDelete: Cascade)
+  ledger      ledger?  @relation(fields: [ledgerId], references: [id], onDelete: Cascade)
 
   @@index([voucherId])
   @@index([productId])
@@ -1733,28 +1746,28 @@ model role {
 }
 
 model shippingaddress {
-  id              Int      @id @default(autoincrement())
-  name            String
-  phone           String?
-  address         String   @db.Text
-  city            String?
-  state           String?
-  country         String?
-  zipCode         String?
-  isDefault       Boolean  @default(false)
-  customerId      Int?
-  vendorId        Int?
-  customer        customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
-  vendor          vendor?   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @default(now()) @updatedAt
+  id         Int       @id @default(autoincrement())
+  name       String
+  phone      String?
+  address    String    @db.Text
+  city       String?
+  state      String?
+  country    String?
+  zipCode    String?
+  isDefault  Boolean   @default(false)
+  customerId Int?
+  vendorId   Int?
+  customer   customer? @relation(fields: [customerId], references: [id], onDelete: Cascade)
+  vendor     vendor?   @relation(fields: [vendorId], references: [id], onDelete: Cascade)
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @default(now()) @updatedAt
 
   @@index([customerId])
   @@index([vendorId])
 }
 
 model inventory_batch {
-  id             Int                    @id @default(autoincrement())
+  id             Int                     @id @default(autoincrement())
   productId      Int
   warehouseId    Int
   purchaseBillId Int?
@@ -1763,11 +1776,11 @@ model inventory_batch {
   rate           Float
   batchNumber    String?
   expiryDate     DateTime?
-  createdAt      DateTime               @default(now())
-  updatedAt      DateTime               @default(now()) @updatedAt
-  product        product                @relation(fields: [productId], references: [id], onDelete: Cascade)
-  warehouse      warehouse              @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
-  purchasebill   purchasebill?          @relation(fields: [purchaseBillId], references: [id], onDelete: Cascade)
+  createdAt      DateTime                @default(now())
+  updatedAt      DateTime                @default(now()) @updatedAt
+  product        product                 @relation(fields: [productId], references: [id], onDelete: Cascade)
+  warehouse      warehouse               @relation(fields: [warehouseId], references: [id], onDelete: Cascade)
+  purchasebill   purchasebill?           @relation(fields: [purchaseBillId], references: [id], onDelete: Cascade)
   consumptions   inventory_consumption[]
 
   @@index([productId])
@@ -1776,17 +1789,17 @@ model inventory_batch {
 }
 
 model inventory_consumption {
-  id          Int             @id @default(autoincrement())
-  invoiceId   Int
-  productId   Int
-  batchId     Int
-  qtyUsed     Float
-  rateUsed    Float
-  totalCost   Float
-  createdAt   DateTime        @default(now())
-  batch       inventory_batch @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  invoice     invoice         @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
-  product     product         @relation(fields: [productId], references: [id], onDelete: Cascade)
+  id        Int             @id @default(autoincrement())
+  invoiceId Int
+  productId Int
+  batchId   Int
+  qtyUsed   Float
+  rateUsed  Float
+  totalCost Float
+  createdAt DateTime        @default(now())
+  batch     inventory_batch @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  invoice   invoice         @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  product   product         @relation(fields: [productId], references: [id], onDelete: Cascade)
 
   @@index([invoiceId])
   @@index([productId])
@@ -1794,30 +1807,30 @@ model inventory_consumption {
 }
 
 model receiptinvoiceallocation {
-  id              Int      @id @default(autoincrement())
-  receiptId       Int
-  invoiceId       Int
-  amount          Float
-  companyId       Int
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @default(now()) @updatedAt
-  receipt         receipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade, map: "ReceiptInvoiceAllocation_receiptId_fkey")
-  invoice         invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade, map: "ReceiptInvoiceAllocation_invoiceId_fkey")
+  id        Int      @id @default(autoincrement())
+  receiptId Int
+  invoiceId Int
+  amount    Float
+  companyId Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @default(now()) @updatedAt
+  receipt   receipt  @relation(fields: [receiptId], references: [id], onDelete: Cascade, map: "ReceiptInvoiceAllocation_receiptId_fkey")
+  invoice   invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade, map: "ReceiptInvoiceAllocation_invoiceId_fkey")
 
   @@index([receiptId], map: "ReceiptInvoiceAllocation_receiptId_fkey")
   @@index([invoiceId], map: "ReceiptInvoiceAllocation_invoiceId_fkey")
 }
 
 model paymentbillallocation {
-  id              Int          @id @default(autoincrement())
-  paymentId       Int
-  purchaseBillId  Int
-  amount          Float
-  companyId       Int
-  createdAt       DateTime     @default(now())
-  updatedAt       DateTime     @default(now()) @updatedAt
-  payment         payment      @relation(fields: [paymentId], references: [id], onDelete: Cascade, map: "PaymentBillAllocation_paymentId_fkey")
-  purchasebill    purchasebill @relation(fields: [purchaseBillId], references: [id], onDelete: Cascade, map: "PaymentBillAllocation_purchaseBillId_fkey")
+  id             Int          @id @default(autoincrement())
+  paymentId      Int
+  purchaseBillId Int
+  amount         Float
+  companyId      Int
+  createdAt      DateTime     @default(now())
+  updatedAt      DateTime     @default(now()) @updatedAt
+  payment        payment      @relation(fields: [paymentId], references: [id], onDelete: Cascade, map: "PaymentBillAllocation_paymentId_fkey")
+  purchasebill   purchasebill @relation(fields: [purchaseBillId], references: [id], onDelete: Cascade, map: "PaymentBillAllocation_purchaseBillId_fkey")
 
   @@index([paymentId], map: "PaymentBillAllocation_paymentId_fkey")
   @@index([purchaseBillId], map: "PaymentBillAllocation_purchaseBillId_fkey")
@@ -1826,7 +1839,7 @@ model paymentbillallocation {
 model transaction_numbering {
   id              Int      @id @default(autoincrement())
   companyId       Int
-  transactionType String   // e.g., "invoice", "receipt", "purchaseorder", "salesreturn", etc.
+  transactionType String // e.g., "invoice", "receipt", "purchaseorder", "salesreturn", etc.
   prefix          String?  @default("")
   currentNumber   Int      @default(0)
   paddingLength   Int      @default(4)
@@ -1844,15 +1857,15 @@ model auditlog {
   userId    Int?
   userEmail String?
   userName  String?
-  action    String   // "CREATE", "UPDATE", "DELETE"
-  entity    String   // "Invoice", "PurchaseBill", "Receipt", "Payment", "Voucher", "Customer", "Vendor", "Product", "POS"
+  action    String // "CREATE", "UPDATE", "DELETE"
+  entity    String // "Invoice", "PurchaseBill", "Receipt", "Payment", "Voucher", "Customer", "Vendor", "Product", "POS"
   entityId  Int?
   details   String?  @db.Text
   companyId Int
   createdAt DateTime @default(now())
 
-  user      user?    @relation(fields: [userId], references: [id], onDelete: SetNull)
-  company   company  @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  user    user?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  company company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([companyId])
   @@index([userId])

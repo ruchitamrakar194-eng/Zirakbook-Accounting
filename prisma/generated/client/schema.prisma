@@ -1100,15 +1100,18 @@ model salesorderitem {
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @default(now()) @updatedAt
   warehouseId Int?
+  uomId       Int?
   salesorder  salesorder @relation(fields: [orderId], references: [id], onDelete: Cascade, map: "SalesOrderItem_orderId_fkey")
   product     product?   @relation(fields: [productId], references: [id], map: "SalesOrderItem_productId_fkey")
   service     service?   @relation(fields: [serviceId], references: [id], map: "SalesOrderItem_serviceId_fkey")
   warehouse   warehouse? @relation(fields: [warehouseId], references: [id], map: "SalesOrderItem_warehouseId_fkey")
+  uom         uom?       @relation(fields: [uomId], references: [id], onDelete: Restrict, map: "SalesOrderItem_uomId_fkey")
 
   @@index([orderId], map: "SalesOrderItem_orderId_fkey")
   @@index([productId], map: "SalesOrderItem_productId_fkey")
   @@index([serviceId], map: "SalesOrderItem_serviceId_fkey")
   @@index([warehouseId], map: "SalesOrderItem_warehouseId_fkey")
+  @@index([uomId], map: "SalesOrderItem_uomId_fkey")
 }
 
 model salesquotation {
@@ -1162,15 +1165,18 @@ model salesquotationitem {
   createdAt      DateTime       @default(now())
   updatedAt      DateTime       @default(now()) @updatedAt
   warehouseId    Int?
+  uomId          Int?
   product        product?       @relation(fields: [productId], references: [id], map: "SalesQuotationItem_productId_fkey")
   salesquotation salesquotation @relation(fields: [quotationId], references: [id], onDelete: Cascade, map: "SalesQuotationItem_quotationId_fkey")
   service        service?       @relation(fields: [serviceId], references: [id], map: "SalesQuotationItem_serviceId_fkey")
   warehouse      warehouse?     @relation(fields: [warehouseId], references: [id], map: "SalesQuotationItem_warehouseId_fkey")
+  uom            uom?           @relation(fields: [uomId], references: [id], onDelete: Restrict, map: "SalesQuotationItem_uomId_fkey")
 
   @@index([productId], map: "SalesQuotationItem_productId_fkey")
   @@index([quotationId], map: "SalesQuotationItem_quotationId_fkey")
   @@index([serviceId], map: "SalesQuotationItem_serviceId_fkey")
   @@index([warehouseId], map: "SalesQuotationItem_warehouseId_fkey")
+  @@index([uomId], map: "SalesQuotationItem_uomId_fkey")
 }
 
 model salesreturn {
@@ -1359,13 +1365,15 @@ model uom {
   childUnits uom[]   @relation("uom_conversions")
 
   // Product relations
-  product          product[]          @relation("product_base_uom")
-  product_purchase product[]          @relation("product_purchase_uom")
-  product_sales    product[]          @relation("product_sales_uom")
-  service          service[]
-  purchasebillitem purchasebillitem[]
-  invoiceitem      invoiceitem[]
-  posinvoiceitem   posinvoiceitem[]
+  product            product[]            @relation("product_base_uom")
+  product_purchase   product[]            @relation("product_purchase_uom")
+  product_sales      product[]            @relation("product_sales_uom")
+  service            service[]
+  purchasebillitem   purchasebillitem[]
+  invoiceitem        invoiceitem[]
+  posinvoiceitem     posinvoiceitem[]
+  salesorderitem     salesorderitem[]
+  salesquotationitem salesquotationitem[]
 
   @@unique([companyId, category, unitName], map: "UOM_companyId_category_unitName_key")
   @@index([baseUnitId], map: "UOM_baseUnitId_fkey")
