@@ -914,6 +914,8 @@ model purchaseorderitem {
   product       product?      @relation(fields: [productId], references: [id], map: "PurchaseOrderItem_productId_fkey")
   warehouse     warehouse?    @relation(fields: [warehouseId], references: [id], map: "PurchaseOrderItem_warehouseId_fkey")
   warehouseId   Int?
+  uomId         Int?
+  uom           uom?          @relation(fields: [uomId], references: [id], onDelete: Restrict, map: "PurchaseOrderItem_uomId_fkey")
 
   @@index([orderId], map: "PurchaseOrderItem_orderId_fkey")
   @@index([productId], map: "PurchaseOrderItem_productId_fkey")
@@ -963,9 +965,11 @@ model purchasequotationitem {
   createdAt         DateTime          @default(now())
   updatedAt         DateTime          @default(now()) @updatedAt
   warehouseId       Int?
+  uomId             Int?
   product           product?          @relation(fields: [productId], references: [id], map: "PurchaseQuotationItem_productId_fkey")
   purchasequotation purchasequotation @relation(fields: [quotationId], references: [id], onDelete: Cascade, map: "PurchaseQuotationItem_quotationId_fkey")
   warehouse         warehouse?        @relation(fields: [warehouseId], references: [id], map: "PurchaseQuotationItem_warehouseId_fkey")
+  uom               uom?              @relation(fields: [uomId], references: [id], onDelete: Restrict, map: "PurchaseQuotationItem_uomId_fkey")
 
   @@index([productId], map: "PurchaseQuotationItem_productId_fkey")
   @@index([quotationId], map: "PurchaseQuotationItem_quotationId_fkey")
@@ -1365,15 +1369,17 @@ model uom {
   childUnits uom[]   @relation("uom_conversions")
 
   // Product relations
-  product            product[]            @relation("product_base_uom")
-  product_purchase   product[]            @relation("product_purchase_uom")
-  product_sales      product[]            @relation("product_sales_uom")
-  service            service[]
-  purchasebillitem   purchasebillitem[]
-  invoiceitem        invoiceitem[]
-  posinvoiceitem     posinvoiceitem[]
-  salesorderitem     salesorderitem[]
-  salesquotationitem salesquotationitem[]
+  product               product[]               @relation("product_base_uom")
+  product_purchase      product[]               @relation("product_purchase_uom")
+  product_sales         product[]               @relation("product_sales_uom")
+  service               service[]
+  purchasebillitem      purchasebillitem[]
+  invoiceitem           invoiceitem[]
+  posinvoiceitem        posinvoiceitem[]
+  salesorderitem        salesorderitem[]
+  salesquotationitem    salesquotationitem[]
+  purchaseorderitem     purchaseorderitem[]
+  purchasequotationitem purchasequotationitem[]
 
   @@unique([companyId, category, unitName], map: "UOM_companyId_category_unitName_key")
   @@index([baseUnitId], map: "UOM_baseUnitId_fkey")

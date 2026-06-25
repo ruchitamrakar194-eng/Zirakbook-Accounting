@@ -322,6 +322,30 @@ const updateCustomer = async (req, res) => {
 
         // Update in transaction
         const result = await prisma.$transaction(async (tx) => {
+            const newOpeningBalance = parseFloat(customerData.accountBalance) || 0;
+            let newCurrentBalance = newOpeningBalance;
+
+            if (existingCustomer.ledgerId) {
+                // Fetch all transactions involving customer's ledger
+                const transactions = await tx.transaction.findMany({
+                    where: {
+                        companyId: companyId,
+                        OR: [
+                            { debitLedgerId: existingCustomer.ledgerId },
+                            { creditLedgerId: existingCustomer.ledgerId }
+                        ]
+                    }
+                });
+
+                for (const txn of transactions) {
+                    if (txn.debitLedgerId === existingCustomer.ledgerId) {
+                        newCurrentBalance += txn.amount;
+                    } else {
+                        newCurrentBalance -= txn.amount;
+                    }
+                }
+            }
+
             // Update Customer
             const customer = await tx.customer.update({
                 where: { id: parseInt(id) },
@@ -334,7 +358,7 @@ const updateCustomer = async (req, res) => {
                     anyFile: customerData.anyFile,
                     accountType: customerData.accountType,
                     balanceType: customerData.balanceType,
-                    accountBalance: parseFloat(customerData.accountBalance) || 0,
+                    accountBalance: newCurrentBalance,
                     bankAccountNumber: customerData.bankAccountNumber,
                     bankIFSC: customerData.bankIFSC,
                     bankNameBranch: customerData.bankNameBranch,
@@ -383,14 +407,13 @@ const updateCustomer = async (req, res) => {
             // Update Ledger name and balance if customer is edited
             if (existingCustomer.ledgerId) {
                 const newLedgerName = customerData.name;
-                const newBalance = parseFloat(customerData.accountBalance) || 0;
                 await tx.ledger.update({
                     where: { id: existingCustomer.ledgerId },
                     data: {
                         name: newLedgerName,
                         description: `Customer Ledger for ${newLedgerName}`,
-                        openingBalance: newBalance,
-                        currentBalance: newBalance
+                        openingBalance: newOpeningBalance,
+                        currentBalance: newCurrentBalance
                     }
                 });
             }

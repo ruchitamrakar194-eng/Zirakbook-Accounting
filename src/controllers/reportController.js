@@ -1861,7 +1861,7 @@ const getAllTransactions = async (req, res) => {
         const formattedTransactions = groupOrder.map(key => {
             const txns = groups[key];
             const primaryTxn = txns[0];
-            
+
             let balanceType = 'Debit';
             let partyName = '-';
             let accountType = '-';
@@ -1940,15 +1940,15 @@ const getAllTransactions = async (req, res) => {
                 balanceType = 'Debit';
                 partyName = primaryTxn.ledger_transaction_debitLedgerIdToledger?.name || 'Journal Entry';
                 accountType = primaryTxn.ledger_transaction_debitLedgerIdToledger?.accountgroup?.name;
-                
+
                 const vNo = primaryTxn.journalentry?.voucherNumber || primaryTxn.voucherNumber;
                 voucherNo = vNo || '-';
-                
+
                 // Try to find matching voucher from our Map, fallback to journalentry.id
                 const lookupKey = `JOURNAL_${vNo}`;
                 targetId = voucherMap.get(lookupKey) || null;
                 vType = 'JOURNAL';
-                
+
                 amount = txns.reduce((sum, t) => sum + parseFloat(t.amount), 0);
                 if (!note && primaryTxn.journalentry) note = primaryTxn.journalentry.narration;
             }
@@ -1962,13 +1962,13 @@ const getAllTransactions = async (req, res) => {
                     balanceType = ['INCOME', 'RECEIPT'].includes(primaryTxn.voucherType) ? 'Credit' : 'Debit';
                 }
 
-                partyName = balanceType === 'Debit' 
-                    ? primaryTxn.ledger_transaction_debitLedgerIdToledger?.name 
+                partyName = balanceType === 'Debit'
+                    ? primaryTxn.ledger_transaction_debitLedgerIdToledger?.name
                     : primaryTxn.ledger_transaction_creditLedgerIdToledger?.name;
                 accountType = balanceType === 'Debit'
                     ? primaryTxn.ledger_transaction_debitLedgerIdToledger?.accountgroup?.name
                     : primaryTxn.ledger_transaction_creditLedgerIdToledger?.accountgroup?.name;
-                
+
                 if (['EXPENSE', 'INCOME', 'CONTRA'].includes(primaryTxn.voucherType)) {
                     targetId = primaryTxn.id;
                     if (primaryTxn.voucherType === 'CONTRA') {

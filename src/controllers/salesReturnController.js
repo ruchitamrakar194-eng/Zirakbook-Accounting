@@ -5,13 +5,14 @@ const numberingService = require('../services/numberingService');
 // Create Sales Return
 const createReturn = async (req, res) => {
     try {
-        const { returnNumber, date, customerId, invoiceId, items, reason, manualVoucherNo, customFields } = req.body;
+        const { returnNumber, date, customerId, invoiceId, invoiceType, items, reason, manualVoucherNo, customFields } = req.body;
         const companyId = req.user.companyId;
 
         if (!returnNumber || !customerId || !items || items.length === 0) {
             return res.status(400).json({ success: false, message: 'Please provide all required fields' });
         }
 
+        console.log(`[createReturn] Starting return for customer ${customerId}, invoice ${invoiceId}, items:`, items);
         const customer = await prisma.customer.findUnique({
             where: { id: parseInt(customerId) },
             include: { ledger: true }
@@ -24,18 +25,59 @@ const createReturn = async (req, res) => {
 
         let totalAmount = 0;
         const returnItems = items.map(item => {
-            const amount = (parseFloat(item.quantity) || 0) * (parseFloat(item.rate) || 0);
+            const qty = parseFloat(item.quantity) || 0;
+            const rate = parseFloat(item.rate) || 0;
+            const discount = parseFloat(item.discount) || 0;
+            const taxRate = parseFloat(item.taxRate) || 0;
+            const taxableAmount = Math.max(0, (qty * rate) - discount);
+            const taxAmount = (taxableAmount * taxRate) / 100;
+            const amount = taxableAmount + taxAmount;
             totalAmount += amount;
             return {
                 productId: parseInt(item.productId),
                 warehouseId: parseInt(item.warehouseId),
-                quantity: parseFloat(item.quantity),
-                rate: parseFloat(item.rate),
+                quantity: qty,
+                rate: rate,
+                taxRate: taxRate,
                 amount: amount
             };
         });
 
+        // Check if invoice is POS invoice
+        // Frontend sends invoiceType='POS_INVOICE' explicitly; fall back to DB lookup
+        let isPosInvoice = invoiceType === 'POS_INVOICE';
+        let posInvoice = null;
+        if (invoiceId) {
+            if (isPosInvoice) {
+                posInvoice = await prisma.posinvoice.findFirst({
+                    where: { id: parseInt(invoiceId), companyId: parseInt(companyId) }
+                });
+                if (!posInvoice) isPosInvoice = false; // safety: not found, treat as regular
+            } else {
+                // Fallback: check if this invoiceId actually belongs to a POS invoice
+                posInvoice = await prisma.posinvoice.findFirst({
+                    where: { id: parseInt(invoiceId), companyId: parseInt(companyId) }
+                });
+                if (posInvoice) isPosInvoice = true;
+            }
+        }
+        console.log(`[createReturn] isPosInvoice: ${isPosInvoice}, invoiceId: ${invoiceId}`);
+
+        let customFieldsObj = {};
+        if (customFields) {
+            try {
+                customFieldsObj = typeof customFields === 'string' ? JSON.parse(customFields) : customFields;
+            } catch (e) {
+                console.error("Error parsing customFields:", e);
+            }
+        }
+        if (isPosInvoice) {
+            customFieldsObj.posInvoiceId = posInvoice.id;
+        }
+        const finalCustomFields = JSON.stringify(customFieldsObj);
+
         const result = await prisma.$transaction(async (tx) => {
+            console.log("[createReturn] tx: Resolving returnLedger...");
             // Helper to resolve ledgers (Auto-create if missing)
             const resolveLedger = async (txOrPrisma, namePattern, type) => {
                 let ledger = await txOrPrisma.ledger.findFirst({
@@ -59,6 +101,7 @@ const createReturn = async (req, res) => {
 
             const returnLedger = await resolveLedger(tx, 'Sales Return', 'EXPENSES') || await resolveLedger(tx, 'Sales Return', 'INCOME');
             if (!returnLedger) throw new Error('Sales Return ledger could not be resolved or created');
+            console.log(`[createReturn] tx: Resolved returnLedger: ${returnLedger.id}`);
 
             // Generate Auto Voucher No (inside transaction for consistency)
             const getAutoVoucherNo = async (companyId) => {
@@ -69,8 +112,10 @@ const createReturn = async (req, res) => {
             };
 
             const autoVoucherNo = await getAutoVoucherNo(companyId);
+            console.log(`[createReturn] tx: Generated autoVoucherNo: ${autoVoucherNo}`);
 
             // 1. Create Sales Return
+            console.log("[createReturn] tx: Creating salesreturn record...");
             const salesReturn = await tx.salesreturn.create({
                 data: {
                     returnNumber,
@@ -78,19 +123,21 @@ const createReturn = async (req, res) => {
                     autoVoucherNo: autoVoucherNo,
                     date: new Date(date),
                     customerId: parseInt(customerId),
-                    invoiceId: invoiceId ? parseInt(invoiceId) : null,
+                    invoiceId: isPosInvoice ? null : (invoiceId ? parseInt(invoiceId) : null),
                     companyId: parseInt(companyId),
                     totalAmount,
                     reason,
                     status: 'Pending', // Default status
-                    customFields: customFields ? (typeof customFields === 'string' ? customFields : JSON.stringify(customFields)) : null,
+                    customFields: finalCustomFields,
                     salesreturnitem: {
                         create: returnItems
                     }
                 }
             });
+            console.log(`[createReturn] tx: SalesReturn created with ID: ${salesReturn.id}`);
 
             // 2. Inventory IN Logic
+            console.log("[createReturn] tx: Processing inventory updates...");
             for (const item of returnItems) {
                 // Increment Stock
                 await tx.stock.upsert({
@@ -120,27 +167,43 @@ const createReturn = async (req, res) => {
                     }
                 });
             }
+            console.log("[createReturn] tx: Inventory updates complete.");
 
             // 3. Update Invoice Balance if linked
+            console.log("[createReturn] tx: Updating invoice/posinvoice balance...");
             if (invoiceId) {
-                const invoice = await tx.invoice.findUnique({ where: { id: parseInt(invoiceId) } });
-                if (invoice) {
-                    // Treat return as a "payment" (credit) towards the invoice balance
-                    const newPaid = invoice.paidAmount + totalAmount;
-                    const newBalance = Math.max(0, invoice.totalAmount - newPaid);
-
-                    await tx.invoice.update({
-                        where: { id: invoice.id },
+                if (isPosInvoice) {
+                    const newPaid = posInvoice.paidAmount + totalAmount;
+                    const newBalance = Math.max(0, posInvoice.totalAmount - newPaid);
+                    await tx.posinvoice.update({
+                        where: { id: posInvoice.id },
                         data: {
                             paidAmount: newPaid,
                             balanceAmount: newBalance,
-                            status: newBalance <= 0 ? 'PAID' : (newPaid > 0 ? 'PARTIAL' : 'UNPAID')
+                            status: newBalance <= 0 ? 'Paid' : 'Partial'
                         }
                     });
+                } else {
+                    const invoice = await tx.invoice.findUnique({ where: { id: parseInt(invoiceId) } });
+                    if (invoice) {
+                        const newPaid = invoice.paidAmount + totalAmount;
+                        const newBalance = Math.max(0, invoice.totalAmount - newPaid);
+
+                        await tx.invoice.update({
+                            where: { id: invoice.id },
+                            data: {
+                                paidAmount: newPaid,
+                                balanceAmount: newBalance,
+                                status: newBalance <= 0 ? 'PAID' : (newPaid > 0 ? 'PARTIAL' : 'UNPAID')
+                            }
+                        });
+                    }
                 }
             }
+            console.log("[createReturn] tx: Balance updates complete.");
 
             // 4. Accounting Entry (Main)
+            console.log("[createReturn] tx: Updating accounting ledger balances...");
             // DR Sales Return, CR Customer
             await tx.ledger.update({
                 where: { id: returnLedger.id },
@@ -152,6 +215,7 @@ const createReturn = async (req, res) => {
                 data: { currentBalance: { decrement: totalAmount } }
             });
 
+            console.log("[createReturn] tx: Creating financial transaction...");
             await tx.transaction.create({
                 data: {
                     date: new Date(date),
@@ -162,9 +226,11 @@ const createReturn = async (req, res) => {
                     amount: totalAmount,
                     narration: `Sales Return from ${customer.name}${invoiceId ? ' for Invoice ID: ' + invoiceId : ''}`,
                     companyId: parseInt(companyId),
-                    invoiceId: invoiceId ? parseInt(invoiceId) : null
+                    invoiceId: isPosInvoice ? null : (invoiceId ? parseInt(invoiceId) : null),
+                    posInvoiceId: isPosInvoice ? parseInt(invoiceId) : null
                 }
             });
+            console.log("[createReturn] tx: Financial transaction created.");
 
             // 5. COGS and Inventory Reversal (DR Inventory, CR COGS)
             let totalReturnCOGS = 0;
@@ -233,7 +299,35 @@ const getReturns = async (req, res) => {
             orderBy: { createdAt: 'desc' }
         });
 
-        res.status(200).json({ success: true, data: returns });
+        // Post-process returns to populate virtual invoice field for POS invoices
+        const processedReturns = await Promise.all(returns.map(async (row) => {
+            if (!row.invoiceId && row.customFields) {
+                try {
+                    const parsedCF = typeof row.customFields === 'string'
+                        ? JSON.parse(row.customFields)
+                        : row.customFields;
+                    if (parsedCF && parsedCF.posInvoiceId) {
+                        const pos = await prisma.posinvoice.findUnique({
+                            where: { id: parseInt(parsedCF.posInvoiceId) },
+                            select: { invoiceNumber: true }
+                        });
+                        if (pos) {
+                            return {
+                                ...row,
+                                invoice: {
+                                    invoiceNumber: pos.invoiceNumber
+                                }
+                            };
+                        }
+                    }
+                } catch (e) {
+                    console.error("Error parsing customFields in getReturns:", e);
+                }
+            }
+            return row;
+        }));
+
+        res.status(200).json({ success: true, data: processedReturns });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
@@ -264,6 +358,30 @@ const getReturnById = async (req, res) => {
 
         if (!salesReturn) {
             return res.status(404).json({ success: false, message: 'Sales return not found' });
+        }
+
+        // Post-process if POS Invoice is linked
+        if (!salesReturn.invoiceId && salesReturn.customFields) {
+            try {
+                const parsedCF = typeof salesReturn.customFields === 'string'
+                    ? JSON.parse(salesReturn.customFields)
+                    : salesReturn.customFields;
+                if (parsedCF && parsedCF.posInvoiceId) {
+                    const pos = await prisma.posinvoice.findUnique({
+                        where: { id: parseInt(parsedCF.posInvoiceId) }
+                    });
+                    if (pos) {
+                        salesReturn.invoice = {
+                            id: pos.id,
+                            invoiceNumber: pos.invoiceNumber,
+                            type: 'POS_INVOICE',
+                            ...pos
+                        };
+                    }
+                }
+            } catch (e) {
+                console.error("Error parsing customFields in getReturnById:", e);
+            }
         }
 
         res.status(200).json({ success: true, data: salesReturn });
@@ -314,6 +432,48 @@ const updateReturn = async (req, res) => {
                 amount: amount
             };
         });
+
+        // Check if new invoice is POS invoice
+        let isPosInvoice = false;
+        let posInvoice = null;
+        if (invoiceId) {
+            posInvoice = await prisma.posinvoice.findFirst({
+                where: { id: parseInt(invoiceId), companyId: parseInt(companyId) }
+            });
+            if (posInvoice) {
+                isPosInvoice = true;
+            }
+        }
+
+        // Parse existing customFields to check for posInvoiceId
+        let existingPosInvoiceId = null;
+        if (existing.customFields) {
+            try {
+                const parsedCF = typeof existing.customFields === 'string'
+                    ? JSON.parse(existing.customFields)
+                    : existing.customFields;
+                if (parsedCF && parsedCF.posInvoiceId) {
+                    existingPosInvoiceId = parseInt(parsedCF.posInvoiceId);
+                }
+            } catch (e) {
+                console.error("Error parsing existing customFields:", e);
+            }
+        }
+
+        let customFieldsObj = {};
+        if (customFields) {
+            try {
+                customFieldsObj = typeof customFields === 'string' ? JSON.parse(customFields) : customFields;
+            } catch (e) {
+                console.error("Error parsing customFields on update:", e);
+            }
+        }
+        if (isPosInvoice) {
+            customFieldsObj.posInvoiceId = posInvoice.id;
+        } else {
+            delete customFieldsObj.posInvoiceId;
+        }
+        const finalCustomFields = JSON.stringify(customFieldsObj);
 
         const result = await prisma.$transaction(async (tx) => {
             const resolveLedger = async (txOrPrisma, namePattern, type) => {
@@ -366,7 +526,21 @@ const updateReturn = async (req, res) => {
             });
 
             // 2. Reverse Invoice Balance update if linked
-            if (existing.invoiceId) {
+            if (existingPosInvoiceId) {
+                const oldPosInvoice = await tx.posinvoice.findUnique({ where: { id: existingPosInvoiceId } });
+                if (oldPosInvoice) {
+                    const revPaid = Math.max(0, (oldPosInvoice.paidAmount || 0) - existing.totalAmount);
+                    const revBalance = Math.max(0, (oldPosInvoice.totalAmount || 0) - revPaid);
+                    await tx.posinvoice.update({
+                        where: { id: oldPosInvoice.id },
+                        data: {
+                            paidAmount: revPaid,
+                            balanceAmount: revBalance,
+                            status: revBalance <= 0 ? 'Paid' : 'Partial'
+                        }
+                    });
+                }
+            } else if (existing.invoiceId) {
                 const oldInvoice = await tx.invoice.findUnique({ where: { id: existing.invoiceId } });
                 if (oldInvoice) {
                     const revPaid = Math.max(0, (oldInvoice.paidAmount || 0) - existing.totalAmount);
@@ -443,10 +617,10 @@ const updateReturn = async (req, res) => {
                     manualVoucherNo: manualVoucherNo || null,
                     date: new Date(date),
                     customerId: parseInt(customerId),
-                    invoiceId: invoiceId ? parseInt(invoiceId) : null,
+                    invoiceId: isPosInvoice ? null : (invoiceId ? parseInt(invoiceId) : null),
                     totalAmount,
                     reason,
-                    customFields: customFields !== undefined ? (typeof customFields === 'string' ? customFields : JSON.stringify(customFields)) : undefined,
+                    customFields: finalCustomFields,
                     salesreturnitem: {
                         create: returnItems
                     }
@@ -491,19 +665,32 @@ const updateReturn = async (req, res) => {
 
             // 6. Apply New Invoice Balance if linked
             if (invoiceId) {
-                const invoice = await tx.invoice.findUnique({ where: { id: parseInt(invoiceId) } });
-                if (invoice) {
-                    const newPaid = invoice.paidAmount + totalAmount;
-                    const newBalance = Math.max(0, invoice.totalAmount - newPaid);
-
-                    await tx.invoice.update({
-                        where: { id: invoice.id },
+                if (isPosInvoice) {
+                    const newPaid = posInvoice.paidAmount + totalAmount;
+                    const newBalance = Math.max(0, posInvoice.totalAmount - newPaid);
+                    await tx.posinvoice.update({
+                        where: { id: posInvoice.id },
                         data: {
                             paidAmount: newPaid,
                             balanceAmount: newBalance,
-                            status: newBalance <= 0 ? 'PAID' : (newPaid > 0 ? 'PARTIAL' : 'UNPAID')
+                            status: newBalance <= 0 ? 'Paid' : 'Partial'
                         }
                     });
+                } else {
+                    const invoice = await tx.invoice.findUnique({ where: { id: parseInt(invoiceId) } });
+                    if (invoice) {
+                        const newPaid = invoice.paidAmount + totalAmount;
+                        const newBalance = Math.max(0, invoice.totalAmount - newPaid);
+
+                        await tx.invoice.update({
+                            where: { id: invoice.id },
+                            data: {
+                                paidAmount: newPaid,
+                                balanceAmount: newBalance,
+                                status: newBalance <= 0 ? 'PAID' : (newPaid > 0 ? 'PARTIAL' : 'UNPAID')
+                            }
+                        });
+                    }
                 }
             }
 
@@ -529,7 +716,8 @@ const updateReturn = async (req, res) => {
                     amount: totalAmount,
                     narration: `Sales Return from ${customer.name}${invoiceId ? ' for Invoice ID: ' + invoiceId : ''}`,
                     companyId: parseInt(companyId),
-                    invoiceId: invoiceId ? parseInt(invoiceId) : null
+                    invoiceId: isPosInvoice ? null : (invoiceId ? parseInt(invoiceId) : null),
+                    posInvoiceId: isPosInvoice ? parseInt(invoiceId) : null
                 }
             });
 
@@ -621,7 +809,36 @@ const deleteReturn = async (req, res) => {
             }
 
             // 2. Reverse Invoice Balance update if linked
-            if (salesReturn.invoiceId) {
+            let existingPosInvoiceId = null;
+            if (salesReturn.customFields) {
+                try {
+                    const parsedCF = typeof salesReturn.customFields === 'string'
+                        ? JSON.parse(salesReturn.customFields)
+                        : salesReturn.customFields;
+                    if (parsedCF && parsedCF.posInvoiceId) {
+                        existingPosInvoiceId = parseInt(parsedCF.posInvoiceId);
+                    }
+                } catch (e) {
+                    console.error("Error parsing salesReturn customFields on delete:", e);
+                }
+            }
+
+            if (existingPosInvoiceId) {
+                const invoice = await tx.posinvoice.findUnique({ where: { id: existingPosInvoiceId } });
+                if (invoice) {
+                    const revPaid = Math.max(0, (invoice.paidAmount || 0) - salesReturn.totalAmount);
+                    const revBalance = Math.max(0, (invoice.totalAmount || 0) - revPaid);
+
+                    await tx.posinvoice.update({
+                        where: { id: invoice.id },
+                        data: {
+                            paidAmount: revPaid,
+                            balanceAmount: revBalance,
+                            status: revBalance <= 0 ? 'Paid' : 'Partial'
+                        }
+                    });
+                }
+            } else if (salesReturn.invoiceId) {
                 const invoice = await tx.invoice.findUnique({ where: { id: salesReturn.invoiceId } });
                 if (invoice) {
                     const revPaid = Math.max(0, (invoice.paidAmount || 0) - salesReturn.totalAmount);

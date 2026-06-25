@@ -364,6 +364,20 @@ const createPOSInvoice = async (req, res) => {
                 }
             }
 
+            // Sync customer balance to customer table for consistency
+            if (customerId) {
+                const customer = await tx.customer.findUnique({ where: { id: parseInt(customerId) } });
+                if (customer && customer.ledgerId) {
+                    const ledger = await tx.ledger.findUnique({ where: { id: customer.ledgerId } });
+                    if (ledger) {
+                        await tx.customer.update({
+                            where: { id: customer.id },
+                            data: { accountBalance: ledger.currentBalance }
+                        });
+                    }
+                }
+            }
+
             return posInvoice;
         }, {
             maxWait: 15000,
@@ -483,8 +497,20 @@ const deletePOSInvoice = async (req, res) => {
                     await tx.ledger.update({ where: { id: t.debitLedgerId }, data: { currentBalance: { decrement: t.amount } } });
                     await tx.ledger.update({ where: { id: t.creditLedgerId }, data: { currentBalance: { increment: t.amount } } });
                 } else {
-                    await tx.ledger.update({ where: { id: t.debitLedgerId }, data: { currentBalance: { decrement: t.amount } } });
-                    await tx.ledger.update({ where: { id: t.creditLedgerId }, data: { currentBalance: { decrement: t.amount } } });
+                    const dLedger = await tx.ledger.findUnique({ where: { id: t.debitLedgerId }, include: { accountgroup: true } });
+                    const cLedger = await tx.ledger.findUnique({ where: { id: t.creditLedgerId }, include: { accountgroup: true } });
+
+                    const isDrDebitNormal = dLedger?.accountgroup ? ['ASSETS', 'EXPENSES'].includes(dLedger.accountgroup.type) : true;
+                    const isCrDebitNormal = cLedger?.accountgroup ? ['ASSETS', 'EXPENSES'].includes(cLedger.accountgroup.type) : true;
+
+                    await tx.ledger.update({
+                        where: { id: t.debitLedgerId },
+                        data: { currentBalance: isDrDebitNormal ? { decrement: t.amount } : { increment: t.amount } }
+                    });
+                    await tx.ledger.update({
+                        where: { id: t.creditLedgerId },
+                        data: { currentBalance: isCrDebitNormal ? { increment: t.amount } : { decrement: t.amount } }
+                    });
                 }
 
                 await tx.transaction.delete({ where: { id: t.id } });
@@ -548,6 +574,30 @@ const deletePOSInvoice = async (req, res) => {
             maxWait: 15000,
             timeout: 90000
         });
+
+        // Sync customer.accountBalance from ledger after POS invoice delete
+        try {
+            if (invoiceToDelete && invoiceToDelete.customerId) {
+                const customer = await prisma.customer.findUnique({
+                    where: { id: invoiceToDelete.customerId },
+                    select: { id: true, ledgerId: true }
+                });
+                if (customer && customer.ledgerId) {
+                    const ledger = await prisma.ledger.findUnique({
+                        where: { id: customer.ledgerId },
+                        select: { currentBalance: true }
+                    });
+                    if (ledger) {
+                        await prisma.customer.update({
+                            where: { id: customer.id },
+                            data: { accountBalance: ledger.currentBalance }
+                        });
+                    }
+                }
+            }
+        } catch (syncErr) {
+            console.error('Customer balance sync error after POS invoice delete:', syncErr);
+        }
 
         const { logActivity } = require('../utils/auditLogger');
         if (invoiceToDelete) {
@@ -672,8 +722,20 @@ const updatePOSInvoice = async (req, res) => {
                     await tx.ledger.update({ where: { id: t.debitLedgerId }, data: { currentBalance: { decrement: t.amount } } });
                     await tx.ledger.update({ where: { id: t.creditLedgerId }, data: { currentBalance: { increment: t.amount } } });
                 } else {
-                    await tx.ledger.update({ where: { id: t.debitLedgerId }, data: { currentBalance: { decrement: t.amount } } });
-                    await tx.ledger.update({ where: { id: t.creditLedgerId }, data: { currentBalance: { decrement: t.amount } } });
+                    const dLedger = await tx.ledger.findUnique({ where: { id: t.debitLedgerId }, include: { accountgroup: true } });
+                    const cLedger = await tx.ledger.findUnique({ where: { id: t.creditLedgerId }, include: { accountgroup: true } });
+
+                    const isDrDebitNormal = dLedger?.accountgroup ? ['ASSETS', 'EXPENSES'].includes(dLedger.accountgroup.type) : true;
+                    const isCrDebitNormal = cLedger?.accountgroup ? ['ASSETS', 'EXPENSES'].includes(cLedger.accountgroup.type) : true;
+
+                    await tx.ledger.update({
+                        where: { id: t.debitLedgerId },
+                        data: { currentBalance: isDrDebitNormal ? { decrement: t.amount } : { increment: t.amount } }
+                    });
+                    await tx.ledger.update({
+                        where: { id: t.creditLedgerId },
+                        data: { currentBalance: isCrDebitNormal ? { increment: t.amount } : { decrement: t.amount } }
+                    });
                 }
                 await tx.transaction.delete({ where: { id: t.id } });
             }
@@ -1001,6 +1063,21 @@ const updatePOSInvoice = async (req, res) => {
                 }
             }
 
+            // Sync customer balance to customer table for consistency
+            const finalCustId = customerId !== undefined ? customerId : existingInvoice.customerId;
+            if (finalCustId) {
+                const customer = await tx.customer.findUnique({ where: { id: parseInt(finalCustId) } });
+                if (customer && customer.ledgerId) {
+                    const ledger = await tx.ledger.findUnique({ where: { id: customer.ledgerId } });
+                    if (ledger) {
+                        await tx.customer.update({
+                            where: { id: customer.id },
+                            data: { accountBalance: ledger.currentBalance }
+                        });
+                    }
+                }
+            }
+
             return updatedInvoice;
         }, {
             maxWait: 15000,
@@ -1144,6 +1221,20 @@ const recordPOSPayment = async (req, res) => {
                     updatedAt: new Date()
                 }
             });
+
+            // Sync customer balance to customer table for consistency
+            if (invoice.customerId) {
+                const customer = await tx.customer.findUnique({ where: { id: invoice.customerId } });
+                if (customer && customer.ledgerId) {
+                    const ledger = await tx.ledger.findUnique({ where: { id: customer.ledgerId } });
+                    if (ledger) {
+                        await tx.customer.update({
+                            where: { id: customer.id },
+                            data: { accountBalance: ledger.currentBalance }
+                        });
+                    }
+                }
+            }
 
             return updatedInvoice;
         }, {

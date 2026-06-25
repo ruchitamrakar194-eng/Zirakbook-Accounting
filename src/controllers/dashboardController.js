@@ -149,7 +149,7 @@ const getCompanyDashboardStats = async (req, res) => {
         const customerCount = await prisma.customer.count({ where: { companyId: compId } });
         const vendorCount = await prisma.vendor.count({ where: { companyId: compId } });
         const productCount = await prisma.product.count({ where: { companyId: compId } });
-        
+
         // Count for standard invoices & POS invoices
         const saleInvoiceCount = await prisma.invoice.count({
             where: { companyId: compId, NOT: { status: 'CANCELLED' } }

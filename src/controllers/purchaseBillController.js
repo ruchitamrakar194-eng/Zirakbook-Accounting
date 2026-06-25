@@ -8,6 +8,65 @@ const {
     calculateNetRate
 } = require('../services/inventoryValuationService');
 
+// Helper to dynamically adjust Purchase Bill quantities and amounts by associated returns
+const adjustBillWithReturns = (bill) => {
+    if (!bill) return bill;
+
+    const returns = bill.purchasereturn || [];
+    let returnedTotal = 0;
+    const returnedItemsMap = {}; // productId -> { quantity, amount }
+
+    for (const ret of returns) {
+        returnedTotal += ret.totalAmount || 0;
+        const retItems = ret.purchasereturnitem || [];
+        for (const item of retItems) {
+            if (item.productId) {
+                if (!returnedItemsMap[item.productId]) {
+                    returnedItemsMap[item.productId] = { quantity: 0, amount: 0 };
+                }
+                returnedItemsMap[item.productId].quantity += item.quantity || 0;
+                returnedItemsMap[item.productId].amount += item.amount || 0;
+            }
+        }
+    }
+
+    if (bill.purchasebillitem) {
+        bill.purchasebillitem = bill.purchasebillitem.map(item => {
+            const ret = returnedItemsMap[item.productId];
+            if (ret) {
+                const adjustedQty = Math.max(0, item.quantity - ret.quantity);
+                const adjustedAmt = Math.max(0, item.amount - ret.amount);
+                return {
+                    ...item,
+                    quantity: adjustedQty,
+                    amount: adjustedAmt
+                };
+            }
+            return item;
+        });
+    }
+
+    const adjustedTotal = Math.max(0, bill.totalAmount - returnedTotal);
+    const paidAmount = bill.paidAmount || 0;
+    const adjustedBalance = Math.max(0, adjustedTotal - paidAmount);
+
+    let adjustedStatus = bill.status;
+    if (adjustedBalance <= 0) {
+        adjustedStatus = 'PAID';
+    } else if (paidAmount > 0) {
+        adjustedStatus = 'PARTIAL';
+    } else {
+        adjustedStatus = 'UNPAID';
+    }
+
+    return {
+        ...bill,
+        totalAmount: adjustedTotal,
+        balanceAmount: adjustedBalance,
+        status: adjustedStatus
+    };
+};
+
 // Create Purchase Bill (Financial Posting)
 const createBill = async (req, res) => {
     try {
@@ -489,7 +548,11 @@ const getBills = async (req, res) => {
                 },
                 purchaseorder: true,
                 goodsreceiptnote: true,
-                purchasereturn: true,
+                purchasereturn: {
+                    include: {
+                        purchasereturnitem: true
+                    }
+                },
                 payment: {
                     include: {
                         bankLedger: { select: { id: true, name: true } }
@@ -533,10 +596,10 @@ const getBills = async (req, res) => {
                 }
             }
 
-            return {
+            return adjustBillWithReturns({
                 ...bill,
                 payment: deduplicatedPayments
-            };
+            });
         });
 
         res.status(200).json({ success: true, data: mappedBills });
@@ -562,6 +625,11 @@ const getBillById = async (req, res) => {
                 },
                 purchaseorder: true,
                 goodsreceiptnote: true,
+                purchasereturn: {
+                    include: {
+                        purchasereturnitem: true
+                    }
+                },
                 payment: {
                     include: {
                         bankLedger: true
@@ -604,10 +672,10 @@ const getBillById = async (req, res) => {
             }
         }
 
-        const mappedBill = {
+        const mappedBill = adjustBillWithReturns({
             ...bill,
             payment: deduplicatedPayments
-        };
+        });
 
         res.status(200).json({ success: true, data: mappedBill });
     } catch (error) {
@@ -1343,6 +1411,11 @@ const updateBill = async (req, res) => {
                             warehouse: true,
                             uom: true
                         }
+                    },
+                    purchasereturn: {
+                        include: {
+                            purchasereturnitem: true
+                        }
                     }
                 }
             });
@@ -1350,9 +1423,10 @@ const updateBill = async (req, res) => {
             timeout: 120000
         });
 
+        const adjustedUpdated = adjustBillWithReturns(updated);
         const { logActivity } = require('../utils/auditLogger');
         logActivity(req, 'UPDATE', 'PurchaseBill', updated.id, `Purchase Bill #${updated.billNumber} updated for Vendor ID ${updated.vendorId} with amount ${updated.totalAmount}`);
-        res.status(200).json({ success: true, data: updated });
+        res.status(200).json({ success: true, data: adjustedUpdated });
     } catch (error) {
         console.error('Update Purchase Bill Error:', error);
         res.status(500).json({ success: false, message: error.message });

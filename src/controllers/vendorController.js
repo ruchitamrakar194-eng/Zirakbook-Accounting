@@ -317,6 +317,30 @@ const updateVendor = async (req, res) => {
 
         // Update in transaction
         const result = await prisma.$transaction(async (tx) => {
+            const newOpeningBalance = parseFloat(vendorData.accountBalance) || 0;
+            let newCurrentBalance = newOpeningBalance;
+
+            if (existingVendor.ledgerId) {
+                // Fetch all transactions involving vendor's ledger
+                const transactions = await tx.transaction.findMany({
+                    where: {
+                        companyId: companyId,
+                        OR: [
+                            { debitLedgerId: existingVendor.ledgerId },
+                            { creditLedgerId: existingVendor.ledgerId }
+                        ]
+                    }
+                });
+
+                for (const txn of transactions) {
+                    if (txn.creditLedgerId === existingVendor.ledgerId) {
+                        newCurrentBalance += txn.amount;
+                    } else {
+                        newCurrentBalance -= txn.amount;
+                    }
+                }
+            }
+
             // Update Vendor
             const vendor = await tx.vendor.update({
                 where: { id: parseInt(id) },
@@ -329,7 +353,7 @@ const updateVendor = async (req, res) => {
                     anyFile: vendorData.anyFile,
                     accountType: vendorData.accountType,
                     balanceType: vendorData.balanceType,
-                    accountBalance: parseFloat(vendorData.accountBalance) || 0,
+                    accountBalance: newCurrentBalance,
                     bankAccountNumber: vendorData.bankAccountNumber,
                     bankIFSC: vendorData.bankIFSC,
                     bankNameBranch: vendorData.bankNameBranch,
@@ -378,14 +402,13 @@ const updateVendor = async (req, res) => {
             // Update Ledger: sync name AND balance when vendor is edited
             if (existingVendor.ledgerId) {
                 const newLedgerName = vendorData.name;
-                const newBalance = parseFloat(vendorData.accountBalance) || 0;
                 await tx.ledger.update({
                     where: { id: existingVendor.ledgerId },
                     data: {
                         name: newLedgerName,
                         description: `Vendor Ledger for ${newLedgerName}`,
-                        openingBalance: newBalance,
-                        currentBalance: newBalance
+                        openingBalance: newOpeningBalance,
+                        currentBalance: newCurrentBalance
                     }
                 });
             }
@@ -415,6 +438,129 @@ const updateVendor = async (req, res) => {
             success: false,
             message: 'Failed to update vendor'
         });
+    }
+};
+
+// Recalculate Vendor Ledger Balance
+const recalculateBalance = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const companyId = req.user.companyId;
+
+        const vendor = await prisma.vendor.findFirst({
+            where: { id: parseInt(id), companyId: companyId },
+            include: { ledger: true }
+        });
+
+        if (!vendor || !vendor.ledgerId) {
+            return res.status(404).json({ success: false, message: 'Vendor or Ledger not found' });
+        }
+
+        const transactions = await prisma.transaction.findMany({
+            where: {
+                companyId: companyId,
+                OR: [
+                    { debitLedgerId: vendor.ledgerId },
+                    { creditLedgerId: vendor.ledgerId }
+                ]
+            }
+        });
+
+        let newBalance = vendor.ledger.openingBalance || 0;
+        for (const tx of transactions) {
+            if (tx.creditLedgerId === vendor.ledgerId) {
+                newBalance += tx.amount;
+            } else {
+                newBalance -= tx.amount;
+            }
+        }
+
+        await prisma.ledger.update({
+            where: { id: vendor.ledgerId },
+            data: { currentBalance: newBalance }
+        });
+
+        await prisma.vendor.update({
+            where: { id: vendor.id },
+            data: { accountBalance: newBalance }
+        });
+
+        res.status(200).json({
+            success: true,
+            message: 'Balance recalculated successfully',
+            data: {
+                oldBalance: vendor.ledger.currentBalance,
+                newBalance: newBalance
+            }
+        });
+    } catch (error) {
+        console.error('Recalculate Error:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
+// Recalculate All Vendors Ledger Balances
+const recalculateAllBalances = async (req, res) => {
+    try {
+        const companyId = req.user.companyId;
+
+        const vendors = await prisma.vendor.findMany({
+            where: { companyId: companyId },
+            include: { ledger: true }
+        });
+
+        const results = [];
+
+        await prisma.$transaction(async (tx) => {
+            for (const vendor of vendors) {
+                if (!vendor.ledgerId) continue;
+
+                const transactions = await tx.transaction.findMany({
+                    where: {
+                        companyId: companyId,
+                        OR: [
+                            { debitLedgerId: vendor.ledgerId },
+                            { creditLedgerId: vendor.ledgerId }
+                        ]
+                    }
+                });
+
+                let newBalance = vendor.ledger.openingBalance || 0;
+                for (const txn of transactions) {
+                    if (txn.creditLedgerId === vendor.ledgerId) {
+                        newBalance += txn.amount;
+                    } else {
+                        newBalance -= txn.amount;
+                    }
+                }
+
+                await tx.ledger.update({
+                    where: { id: vendor.ledgerId },
+                    data: { currentBalance: newBalance }
+                });
+
+                await tx.vendor.update({
+                    where: { id: vendor.id },
+                    data: { accountBalance: newBalance }
+                });
+
+                results.push({
+                    vendorId: vendor.id,
+                    vendorName: vendor.name,
+                    oldBalance: vendor.accountBalance,
+                    newBalance: newBalance
+                });
+            }
+        });
+
+        res.status(200).json({
+            success: true,
+            message: 'All vendor balances recalculated successfully',
+            data: results
+        });
+    } catch (error) {
+        console.error('Recalculate All Balances Error:', error);
+        res.status(500).json({ success: false, message: error.message || 'Failed to recalculate balances' });
     }
 };
 
@@ -615,5 +761,7 @@ module.exports = {
     getVendorById,
     updateVendor,
     deleteVendor,
-    getVendorStatement
+    getVendorStatement,
+    recalculateBalance,
+    recalculateAllBalances
 };

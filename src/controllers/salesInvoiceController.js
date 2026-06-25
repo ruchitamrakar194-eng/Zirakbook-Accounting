@@ -6,6 +6,122 @@ const {
     reverseStockOut
 } = require('../services/inventoryValuationService');
 
+// Helper to dynamically adjust Sales Invoice quantities and amounts by associated returns
+const adjustInvoiceWithReturns = (invoice) => {
+    if (!invoice) return invoice;
+
+    const returns = invoice.salesreturn || [];
+    let returnedTotal = 0;
+    const returnedItemsMap = {}; // productId -> { quantity, amount }
+
+    for (const ret of returns) {
+        returnedTotal += ret.totalAmount || 0;
+        const retItems = ret.salesreturnitem || [];
+        for (const item of retItems) {
+            if (item.productId) {
+                if (!returnedItemsMap[item.productId]) {
+                    returnedItemsMap[item.productId] = { quantity: 0, amount: 0 };
+                }
+                returnedItemsMap[item.productId].quantity += item.quantity || 0;
+                returnedItemsMap[item.productId].amount += item.amount || 0;
+            }
+        }
+    }
+
+    let newSubtotal = 0;
+    let newTaxAmount = 0;
+    let newTotalAmount = 0;
+    let hasItems = false;
+
+    if (invoice.invoiceitem) {
+        hasItems = true;
+        invoice.invoiceitem = invoice.invoiceitem.map(item => {
+            const ret = returnedItemsMap[item.productId];
+            let adjustedQty = item.quantity;
+            let adjustedAmt = item.amount;
+            
+            if (ret) {
+                adjustedQty = Math.max(0, item.quantity - ret.quantity);
+                const itemRate = parseFloat(item.rate) || 0;
+                const itemDiscount = parseFloat(item.discount) || 0;
+                const itemTaxRate = parseFloat(item.taxRate) || 0;
+
+                const lineGross = adjustedQty * itemRate;
+                const lineTaxable = Math.max(0, lineGross - itemDiscount);
+                const lineTax = (lineTaxable * itemTaxRate) / 100;
+                adjustedAmt = lineTaxable + lineTax;
+            }
+            
+            const itemRate = parseFloat(item.rate) || 0;
+            const itemDiscount = parseFloat(item.discount) || 0;
+            const itemTaxRate = parseFloat(item.taxRate) || 0;
+
+            const lineGross = adjustedQty * itemRate;
+            newSubtotal += lineGross;
+            
+            const lineTaxable = Math.max(0, lineGross - itemDiscount);
+            const lineTax = (lineTaxable * itemTaxRate) / 100;
+            newTaxAmount += lineTax;
+            newTotalAmount += (lineTaxable + lineTax);
+
+            return {
+                ...item,
+                quantity: adjustedQty,
+                amount: adjustedAmt
+            };
+        });
+    }
+
+    // Recalculate invoice total
+    let adjustedTotal = invoice.totalAmount;
+    let adjustedSubtotal = invoice.subtotal;
+    let adjustedTaxAmount = invoice.taxAmount;
+
+    if (hasItems) {
+        adjustedSubtotal = newSubtotal;
+        adjustedTaxAmount = newTaxAmount;
+
+        // Apply overall discounts if standard invoice, or model-level POS discount
+        if (invoice.type === 'POS_INVOICE') {
+            const posDiscount = parseFloat(invoice.discountAmount) || 0;
+            adjustedTotal = Math.max(0, newTotalAmount - posDiscount);
+        } else {
+            const overallDiscount = parseFloat(invoice.overallDiscount) || 0;
+            const overallDiscountType = invoice.overallDiscountType || 'percentage';
+            if (overallDiscount && overallDiscountType === 'percentage') {
+                adjustedTotal = Math.max(0, newTotalAmount - (newTotalAmount * overallDiscount / 100));
+            } else if (overallDiscount) {
+                adjustedTotal = Math.max(0, newTotalAmount - overallDiscount);
+            } else {
+                adjustedTotal = newTotalAmount;
+            }
+        }
+    } else {
+        adjustedTotal = Math.max(0, invoice.totalAmount - returnedTotal);
+    }
+
+    const paidAmount = invoice.paidAmount || 0;
+    const adjustedBalance = Math.max(0, adjustedTotal - paidAmount);
+
+    let adjustedStatus = invoice.status;
+    if (adjustedBalance <= 0) {
+        adjustedStatus = (invoice.type === 'POS_INVOICE') ? 'Paid' : 'PAID';
+    } else if (paidAmount > 0) {
+        adjustedStatus = (invoice.type === 'POS_INVOICE') ? 'Partial' : 'PARTIAL';
+    } else {
+        adjustedStatus = (invoice.type === 'POS_INVOICE') ? 'Unpaid' : 'UNPAID';
+    }
+
+    return {
+        ...invoice,
+        subtotal: adjustedSubtotal,
+        taxAmount: adjustedTaxAmount,
+        totalAmount: adjustedTotal,
+        balanceAmount: adjustedBalance,
+        status: adjustedStatus
+    };
+};
+
 // Create Sales Invoice
 const createInvoice = async (req, res) => {
     try {
@@ -704,7 +820,7 @@ const getInvoices = async (req, res) => {
         const companyId = req.user?.companyId || req.query.companyId;
         if (!companyId) return res.status(400).json({ success: false, message: 'Company ID Missing' });
 
-        const [invoices, posInvoices] = await Promise.all([
+        const [invoices, posInvoices, posReturns] = await Promise.all([
             prisma.invoice.findMany({
                 where: { companyId: parseInt(companyId) },
                 include: {
@@ -755,6 +871,10 @@ const getInvoices = async (req, res) => {
                     }
                 },
                 orderBy: { createdAt: 'desc' }
+            }),
+            prisma.salesreturn.findMany({
+                where: { companyId: parseInt(companyId), invoiceId: null },
+                include: { salesreturnitem: true }
             })
         ]);
 
@@ -785,11 +905,11 @@ const getInvoices = async (req, res) => {
                     }
                 }
 
-                return {
+                return adjustInvoiceWithReturns({
                     ...inv,
                     type: 'TAX_INVOICE',
                     receipt: deduplicatedReceipts
-                };
+                });
             }),
             ...posInvoices.map(pos => {
                 const receiptTransactions = pos.transaction?.filter(t => t.voucherType === 'RECEIPT') || [];
@@ -804,15 +924,45 @@ const getInvoices = async (req, res) => {
                     } : null
                 }));
 
-                return {
+                const associatedReturns = posReturns.filter(ret => {
+                    if (ret.customFields) {
+                        try {
+                            const parsedCF = typeof ret.customFields === 'string'
+                                ? JSON.parse(ret.customFields)
+                                : ret.customFields;
+                            return parsedCF && parseInt(parsedCF.posInvoiceId) === pos.id;
+                        } catch (e) {
+                            return false;
+                        }
+                    }
+                    return false;
+                });
+
+                return adjustInvoiceWithReturns({
                     ...pos,
                     type: 'POS_INVOICE',
-                    invoiceitem: pos.posinvoiceitem,
-                    salesreturn: [],
+                    invoiceitem: pos.posinvoiceitem.map(item => ({
+                        ...item,
+                        productId: item.productId,
+                        serviceId: null,
+                        warehouseId: item.warehouseId,
+                        uomId: item.uomId,
+                        description: item.description || (item.product ? item.product.name : ''),
+                        quantity: item.quantity,
+                        rate: item.rate,
+                        discount: 0,
+                        amount: item.amount,
+                        taxRate: item.taxRate,
+                        product: item.product,
+                        service: null,
+                        warehouse: item.warehouse || null,
+                        uom: item.uom || null
+                    })),
+                    salesreturn: associatedReturns,
                     dueDate: pos.date,
                     status: pos.balanceAmount > 0 ? 'PARTIAL' : 'PAID',
                     receipt: mappedReceipts
-                };
+                });
             })
         ].sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
 
@@ -835,7 +985,7 @@ const getInvoiceById = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Invalid Invoice ID format' });
         }
 
-        const invoice = await prisma.invoice.findFirst({
+        let invoice = await prisma.invoice.findFirst({
             where: { id: parsedId, companyId: parseInt(companyId) },
             include: {
                 invoiceitem: {
@@ -848,6 +998,11 @@ const getInvoiceById = async (req, res) => {
                 },
                 customer: true,
                 salesorder: true,
+                salesreturn: {
+                    include: {
+                        salesreturnitem: true
+                    }
+                },
                 receipt: {
                     include: {
                         cashBankAccount: true
@@ -865,12 +1020,94 @@ const getInvoiceById = async (req, res) => {
             }
         });
 
+        if (!invoice) {
+            // Fallback: Check if it is a POS Invoice
+            const pos = await prisma.posinvoice.findFirst({
+                where: { id: parsedId, companyId: parseInt(companyId) },
+                include: {
+                    customer: true,
+                    posinvoiceitem: {
+                        include: {
+                            product: true,
+                            uom: true
+                        }
+                    },
+                    transaction: {
+                        include: {
+                            ledger_transaction_debitLedgerIdToledger: { select: { id: true, name: true } }
+                        }
+                    }
+                }
+            });
+
+            if (pos) {
+                const receiptTransactions = pos.transaction?.filter(t => t.voucherType === 'RECEIPT') || [];
+                const mappedReceipts = receiptTransactions.map(t => ({
+                    id: t.id,
+                    receiptNumber: t.voucherNumber || '-',
+                    date: t.date,
+                    amount: t.amount,
+                    cashBankAccount: t.ledger_transaction_debitLedgerIdToledger ? {
+                        id: t.ledger_transaction_debitLedgerIdToledger.id,
+                        name: t.ledger_transaction_debitLedgerIdToledger.name
+                    } : null
+                }));
+
+                // Fetch associated returns for this POS invoice
+                const salesReturns = await prisma.salesreturn.findMany({
+                    where: { companyId: parseInt(companyId), invoiceId: null },
+                    include: { salesreturnitem: true }
+                });
+
+                const posReturns = salesReturns.filter(ret => {
+                    if (ret.customFields) {
+                        try {
+                            const parsedCF = typeof ret.customFields === 'string'
+                                ? JSON.parse(ret.customFields)
+                                : ret.customFields;
+                            return parsedCF && parseInt(parsedCF.posInvoiceId) === pos.id;
+                        } catch (e) {
+                            return false;
+                        }
+                    }
+                    return false;
+                });
+
+                invoice = {
+                    ...pos,
+                    type: 'POS_INVOICE',
+                    invoiceitem: pos.posinvoiceitem.map(item => ({
+                        ...item,
+                        productId: item.productId,
+                        serviceId: null,
+                        warehouseId: item.warehouseId,
+                        uomId: item.uomId,
+                        description: item.description || (item.product ? item.product.name : ''),
+                        quantity: item.quantity,
+                        rate: item.rate,
+                        discount: 0,
+                        amount: item.amount,
+                        taxRate: item.taxRate,
+                        product: item.product,
+                        service: null,
+                        warehouse: item.warehouse || null,
+                        uom: item.uom || null
+                    })),
+                    salesreturn: posReturns,
+                    dueDate: pos.date,
+                    status: pos.balanceAmount > 0 ? 'PARTIAL' : 'PAID',
+                    receipt: mappedReceipts,
+                    allocations: []
+                };
+            }
+        }
+
         if (!invoice) return res.status(404).json({ success: false, message: 'Invoice not found' });
 
         // Map allocations to receipt list to maintain compatibility and show correct allocated amount
         const mappedReceipts = [
-            ...invoice.receipt.map(r => ({ ...r })),
-            ...invoice.allocations.map(alloc => ({
+            ...(invoice.receipt || []).map(r => ({ ...r })),
+            ...(invoice.allocations || []).map(alloc => ({
                 id: alloc.receipt.id,
                 receiptNumber: alloc.receipt.receiptNumber,
                 date: alloc.receipt.date,
@@ -891,10 +1128,10 @@ const getInvoiceById = async (req, res) => {
             }
         }
 
-        const mappedInvoice = {
+        const mappedInvoice = adjustInvoiceWithReturns({
             ...invoice,
             receipt: deduplicatedReceipts
-        };
+        });
 
         res.status(200).json({ success: true, data: mappedInvoice });
     } catch (error) {
@@ -1158,6 +1395,11 @@ const updateInvoice = async (req, res) => {
                             service: true,
                             warehouse: true,
                             uom: true
+                        }
+                    },
+                    salesreturn: {
+                        include: {
+                            salesreturnitem: true
                         }
                     }
                 }
@@ -1447,9 +1689,10 @@ const updateInvoice = async (req, res) => {
             return updatedInvoice;
         }, { timeout: 90000 });
 
+        const adjustedResult = adjustInvoiceWithReturns(result);
         const { logActivity } = require('../utils/auditLogger');
         logActivity(req, 'UPDATE', 'Invoice', result.id, `Invoice #${result.invoiceNumber} updated for Customer ID ${result.customerId} with amount ${result.totalAmount}`);
-        res.status(200).json({ success: true, data: result });
+        res.status(200).json({ success: true, data: adjustedResult });
     } catch (error) {
         console.error('Invoice Update Error:', error);
         res.status(500).json({ success: false, message: error.message });
@@ -1490,13 +1733,19 @@ const deleteInvoice = async (req, res) => {
                         data: { currentBalance: { increment: t.amount } }
                     });
                 } else {
+                    const dLedger = await tx.ledger.findUnique({ where: { id: t.debitLedgerId }, include: { accountgroup: true } });
+                    const cLedger = await tx.ledger.findUnique({ where: { id: t.creditLedgerId }, include: { accountgroup: true } });
+
+                    const isDrDebitNormal = dLedger?.accountgroup ? ['ASSETS', 'EXPENSES'].includes(dLedger.accountgroup.type) : true;
+                    const isCrDebitNormal = cLedger?.accountgroup ? ['ASSETS', 'EXPENSES'].includes(cLedger.accountgroup.type) : true;
+
                     await tx.ledger.update({
                         where: { id: t.debitLedgerId },
-                        data: { currentBalance: { decrement: t.amount } }
+                        data: { currentBalance: isDrDebitNormal ? { decrement: t.amount } : { increment: t.amount } }
                     });
                     await tx.ledger.update({
                         where: { id: t.creditLedgerId },
-                        data: { currentBalance: { decrement: t.amount } }
+                        data: { currentBalance: isCrDebitNormal ? { increment: t.amount } : { decrement: t.amount } }
                     });
                 }
             }

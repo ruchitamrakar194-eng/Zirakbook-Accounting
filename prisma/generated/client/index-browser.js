@@ -727,7 +727,8 @@ exports.Prisma.PurchaseorderitemScalarFieldEnum = {
   taxRate: 'taxRate',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
-  warehouseId: 'warehouseId'
+  warehouseId: 'warehouseId',
+  uomId: 'uomId'
 };
 
 exports.Prisma.PurchasequotationScalarFieldEnum = {
@@ -765,7 +766,8 @@ exports.Prisma.PurchasequotationitemScalarFieldEnum = {
   taxRate: 'taxRate',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
-  warehouseId: 'warehouseId'
+  warehouseId: 'warehouseId',
+  uomId: 'uomId'
 };
 
 exports.Prisma.PurchasereturnScalarFieldEnum = {

@@ -215,6 +215,11 @@ async function incrementNumber(companyId, transactionType, usedNumber) {
     parsedNumber = (!isNaN(parsedSuffix) && parsedSuffix >= parsedNumber)
       ? parsedSuffix + 1
       : parsedNumber + 1;
+    
+    // Safeguard against INT overflow in MySQL (INT maximum value is 2147483647)
+    if (parsedNumber > 2147483640) {
+      parsedNumber = (Number(config.currentNumber) || 1) + 1;
+    }
   } else {
     parsedNumber += 1;
   }

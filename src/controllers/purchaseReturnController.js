@@ -321,7 +321,7 @@ const updateReturn = async (req, res) => {
                     returnNumber,
                     date: date ? new Date(date) : undefined,
                     vendorId: vendorId ? parseInt(vendorId) : undefined,
-                    purchaseBillId: purchaseBillId ? parseInt(purchaseBillId) : undefined,
+                    purchaseBillId: purchaseBillId !== undefined ? (purchaseBillId ? parseInt(purchaseBillId) : null) : undefined,
                     totalAmount: totalAmount ? parseFloat(totalAmount) : undefined,
                     reason,
                     customFields: customFields !== undefined ? (typeof customFields === 'string' ? customFields : JSON.stringify(customFields)) : undefined,
