@@ -1150,7 +1150,9 @@ module.exports = {
     deleteAccountSubGroup,
     getAllLedgers,
     updateLedger,
-    deleteLedger
+    deleteLedger,
+    calculateInventoryValue,
+    calculateDynamicLedgerBalances
 };
 
 

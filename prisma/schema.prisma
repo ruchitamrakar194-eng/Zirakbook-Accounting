@@ -257,6 +257,7 @@ model deliverychallan {
   companyId           Int
   notes               String?                @db.Text
   status              deliverychallan_status @default(PENDING)
+  manualStatus        Boolean                @default(false)
   createdAt           DateTime               @default(now())
   updatedAt           DateTime               @default(now()) @updatedAt
   shippingAddress     String?                @db.Text
@@ -324,6 +325,7 @@ model goodsreceiptnote {
   companyId            Int
   notes                String?                @db.Text
   status               String                 @default("Received")
+  manualStatus         Boolean                @default(false)
   customFields         String?                @db.Text
   createdAt            DateTime               @default(now())
   updatedAt            DateTime               @default(now()) @updatedAt
@@ -454,6 +456,7 @@ model invoice {
   currency              String?                    @default("USD")
   exchangeRate          Float?                     @default(1.0)
   status                invoice_status             @default(UNPAID)
+  manualStatus          Boolean                    @default(false)
   salesOrderId          Int?
   notes                 String?                    @db.Text
   createdAt             DateTime                   @default(now())
@@ -609,6 +612,8 @@ model payment {
   discountAmount    Float                   @default(0)
   discountLedgerId  Int?
   customFields      String?                 @db.Text
+  status            String                  @default("CLEARED")
+  manualStatus      Boolean                 @default(false)
   discountLedger    ledger?                 @relation("Payment_DiscountLedger", fields: [discountLedgerId], references: [id], map: "Payment_discountLedgerId_fkey")
   transaction       transaction[]
   allocations       paymentbillallocation[]
@@ -684,6 +689,7 @@ model posinvoice {
   balanceAmount  Float            @default(0)
   paymentMode    String?
   status         String           @default("Paid")
+  manualStatus   Boolean          @default(false)
   notes          String?          @db.Text
   customFields   String?          @db.Text
   createdAt      DateTime         @default(now())
@@ -796,6 +802,7 @@ model purchasebill {
   currency            String?                 @default("USD")
   exchangeRate        Float?                  @default(1.0)
   status              purchasebill_status     @default(UNPAID)
+  manualStatus        Boolean                 @default(false)
   notes               String?                 @db.Text
   createdAt           DateTime                @default(now())
   updatedAt           DateTime                @default(now()) @updatedAt
@@ -869,6 +876,7 @@ model purchaseorder {
   taxAmount           Float                @default(0)
   totalAmount         Float
   status              purchaseorder_status @default(PENDING)
+  manualStatus        Boolean              @default(false)
   notes               String?              @db.Text
   overallDiscount     Float                @default(0)
   overallDiscountType String               @default("percentage")
@@ -934,6 +942,7 @@ model purchasequotation {
   taxAmount             Float                    @default(0)
   totalAmount           Float
   status                purchasequotation_status @default(DRAFT)
+  manualStatus          Boolean                  @default(false)
   notes                 String?                  @db.Text
   overallDiscount       Float                    @default(0)
   overallDiscountType   String                   @default("percentage")
@@ -1006,6 +1015,8 @@ model purchasereturnitem {
   warehouseId      Int
   quantity         Float
   rate             Float
+  taxRate          Float          @default(0)
+  discount         Float          @default(0)
   amount           Float
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @default(now()) @updatedAt
@@ -1039,6 +1050,8 @@ model receipt {
   discountAmount    Float                      @default(0)
   discountLedgerId  Int?
   customFields      String?                    @db.Text
+  status            String                     @default("CLEARED")
+  manualStatus      Boolean                    @default(false)
   discountLedger    ledger?                    @relation("Receipt_DiscountLedger", fields: [discountLedgerId], references: [id], map: "Receipt_discountLedgerId_fkey")
   transaction       transaction[]
   allocations       receiptinvoiceallocation[]
@@ -1063,6 +1076,7 @@ model salesorder {
   overallDiscountType String            @default("percentage")
   totalAmount         Float
   status              salesorder_status @default(PENDING)
+  manualStatus        Boolean           @default(false)
   notes               String?           @db.Text
   createdAt           DateTime          @default(now())
   updatedAt           DateTime          @default(now()) @updatedAt
@@ -1132,6 +1146,7 @@ model salesquotation {
   taxAmount           Float                 @default(0)
   totalAmount         Float
   status              salesquotation_status @default(DRAFT)
+  manualStatus        Boolean               @default(false)
   notes               String?               @db.Text
   createdAt           DateTime              @default(now())
   updatedAt           DateTime              @default(now()) @updatedAt
@@ -1215,6 +1230,8 @@ model salesreturnitem {
   warehouseId   Int
   quantity      Float
   rate          Float
+  taxRate       Float       @default(0)
+  discount      Float       @default(0)
   amount        Float
   createdAt     DateTime    @default(now())
   updatedAt     DateTime    @default(now()) @updatedAt

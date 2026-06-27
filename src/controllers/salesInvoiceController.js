@@ -33,17 +33,28 @@ const adjustInvoiceWithReturns = (invoice) => {
     let newTotalAmount = 0;
     let hasItems = false;
 
-    if (invoice.invoiceitem) {
+    // Use posinvoiceitem if it exists (for POS_INVOICE), otherwise invoiceitem
+    const itemsKey = invoice.posinvoiceitem ? 'posinvoiceitem' : (invoice.invoiceitem ? 'invoiceitem' : null);
+    const items = itemsKey ? invoice[itemsKey] : null;
+
+    // Store original values if not already present
+    invoice.originalTotalAmount = invoice.originalTotalAmount !== undefined ? invoice.originalTotalAmount : invoice.totalAmount;
+    invoice.originalSubtotal = invoice.originalSubtotal !== undefined ? invoice.originalSubtotal : invoice.subtotal;
+    invoice.originalTaxAmount = invoice.originalTaxAmount !== undefined ? invoice.originalTaxAmount : invoice.taxAmount;
+
+    if (items) {
         hasItems = true;
-        invoice.invoiceitem = invoice.invoiceitem.map(item => {
+        invoice[itemsKey] = items.map(item => {
             const ret = returnedItemsMap[item.productId];
             let adjustedQty = item.quantity;
             let adjustedAmt = item.amount;
             
+            const originalQty = item.originalQuantity !== undefined ? item.originalQuantity : item.quantity;
+            
             if (ret) {
                 adjustedQty = Math.max(0, item.quantity - ret.quantity);
                 const itemRate = parseFloat(item.rate) || 0;
-                const itemDiscount = parseFloat(item.discount) || 0;
+                const itemDiscount = parseFloat(item.discount || 0) || 0;
                 const itemTaxRate = parseFloat(item.taxRate) || 0;
 
                 const lineGross = adjustedQty * itemRate;
@@ -53,7 +64,7 @@ const adjustInvoiceWithReturns = (invoice) => {
             }
             
             const itemRate = parseFloat(item.rate) || 0;
-            const itemDiscount = parseFloat(item.discount) || 0;
+            const itemDiscount = parseFloat(item.discount || 0) || 0;
             const itemTaxRate = parseFloat(item.taxRate) || 0;
 
             const lineGross = adjustedQty * itemRate;
@@ -66,6 +77,7 @@ const adjustInvoiceWithReturns = (invoice) => {
 
             return {
                 ...item,
+                originalQuantity: originalQty,
                 quantity: adjustedQty,
                 amount: adjustedAmt
             };
@@ -77,12 +89,14 @@ const adjustInvoiceWithReturns = (invoice) => {
     let adjustedSubtotal = invoice.subtotal;
     let adjustedTaxAmount = invoice.taxAmount;
 
+    const isPos = (invoice.type === 'POS_INVOICE' || !!invoice.posinvoiceitem);
+
     if (hasItems) {
         adjustedSubtotal = newSubtotal;
         adjustedTaxAmount = newTaxAmount;
 
         // Apply overall discounts if standard invoice, or model-level POS discount
-        if (invoice.type === 'POS_INVOICE') {
+        if (isPos) {
             const posDiscount = parseFloat(invoice.discountAmount) || 0;
             adjustedTotal = Math.max(0, newTotalAmount - posDiscount);
         } else {
@@ -100,16 +114,29 @@ const adjustInvoiceWithReturns = (invoice) => {
         adjustedTotal = Math.max(0, invoice.totalAmount - returnedTotal);
     }
 
-    const paidAmount = invoice.paidAmount || 0;
+    const originalPaidAmount = invoice.paidAmount || 0;
+    // Cap paidAmount to adjustedTotal if there are returns
+    const paidAmount = Math.min(originalPaidAmount, adjustedTotal);
     const adjustedBalance = Math.max(0, adjustedTotal - paidAmount);
 
     let adjustedStatus = invoice.status;
-    if (adjustedBalance <= 0) {
-        adjustedStatus = (invoice.type === 'POS_INVOICE') ? 'Paid' : 'PAID';
-    } else if (paidAmount > 0) {
-        adjustedStatus = (invoice.type === 'POS_INVOICE') ? 'Partial' : 'PARTIAL';
+    if (invoice.manualStatus === true || invoice.manualStatus === 'true') {
+        // Keep manually selected status
+        adjustedStatus = invoice.status;
+    } else if (returnedTotal > 0) {
+        if (adjustedTotal <= 0) {
+            adjustedStatus = isPos ? 'Returned' : 'RETURNED';
+        } else {
+            adjustedStatus = isPos ? 'Partially Returned' : 'PARTIALLY_RETURNED';
+        }
     } else {
-        adjustedStatus = (invoice.type === 'POS_INVOICE') ? 'Unpaid' : 'UNPAID';
+        if (adjustedBalance <= 0) {
+            adjustedStatus = isPos ? 'Paid' : 'PAID';
+        } else if (paidAmount > 0) {
+            adjustedStatus = isPos ? 'Partial' : 'PARTIAL';
+        } else {
+            adjustedStatus = isPos ? 'Unpaid' : 'UNPAID';
+        }
     }
 
     return {
@@ -117,15 +144,17 @@ const adjustInvoiceWithReturns = (invoice) => {
         subtotal: adjustedSubtotal,
         taxAmount: adjustedTaxAmount,
         totalAmount: adjustedTotal,
+        paidAmount: paidAmount,
         balanceAmount: adjustedBalance,
         status: adjustedStatus
     };
 };
 
+
 // Create Sales Invoice
 const createInvoice = async (req, res) => {
     try {
-        const { invoiceNumber, date, dueDate, customerId, salesOrderId, deliveryChallanId, items, notes, taxAmount, overallDiscount, overallDiscountType, billingName, billingAddress, billingCity, billingState, billingZipCode, billingCountry, shippingName, shippingAddress, shippingCity, shippingState, shippingZipCode, shippingCountry, currency, exchangeRate } = req.body;
+        const { invoiceNumber, date, dueDate, customerId, salesOrderId, deliveryChallanId, items, notes, taxAmount, overallDiscount, overallDiscountType, billingName, billingAddress, billingCity, billingState, billingZipCode, billingCountry, shippingName, shippingAddress, shippingCity, shippingState, shippingZipCode, shippingCountry, currency, exchangeRate, manualStatus, status } = req.body;
         // Fallback to req.body.companyId if req.user is missing (custom frontend case)
         const companyId = req.user?.companyId || req.body.companyId;
 
@@ -284,6 +313,8 @@ const createInvoice = async (req, res) => {
                     currency: docCurrency,
                     exchangeRate: docExchangeRate,
                     notes,
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: (manualStatus === true || manualStatus === 'true') && status ? status : 'UNPAID',
                     overallDiscount: parseFloat(overallDiscount) || 0,
                     overallDiscountType: overallDiscountType || 'percentage',
                     billingName: req.body.billingName,
@@ -352,12 +383,12 @@ const createInvoice = async (req, res) => {
                     data: {
                         paidAmount: finalPaid,
                         balanceAmount: finalBalance,
-                        status: finalBalance <= 0 ? 'PAID' : 'PARTIAL'
+                        status: (manualStatus === true || manualStatus === 'true') && status ? status : (finalBalance <= 0 ? 'PAID' : 'PARTIAL')
                     }
                 });
                 invoice.paidAmount = finalPaid;
                 invoice.balanceAmount = finalBalance;
-                invoice.status = finalBalance <= 0 ? 'PAID' : 'PARTIAL';
+                invoice.status = (manualStatus === true || manualStatus === 'true') && status ? status : (finalBalance <= 0 ? 'PAID' : 'PARTIAL');
             }
 
             // B. Inventory OUT Logic
@@ -1143,11 +1174,22 @@ const getInvoiceById = async (req, res) => {
 const updateInvoice = async (req, res) => {
     try {
         const { id } = req.params;
-        const { items, overallDiscount, overallDiscountType, billingName, billingAddress, billingCity, billingState, billingZipCode, billingCountry, shippingName, shippingAddress, shippingCity, shippingState, shippingZipCode, shippingCountry, currency, exchangeRate, ...data } = req.body;
+        const { items, overallDiscount, overallDiscountType, billingName, billingAddress, billingCity, billingState, billingZipCode, billingCountry, shippingName, shippingAddress, shippingCity, shippingState, shippingZipCode, shippingCountry, currency, exchangeRate, manualStatus, status, onlyUpdateStatus, ...data } = req.body;
         const companyId = req.user?.companyId || req.body.companyId;
 
         if (!companyId) {
             return res.status(400).json({ success: false, message: 'Company ID is missing' });
+        }
+
+        if (onlyUpdateStatus === true || onlyUpdateStatus === 'true') {
+            const updated = await prisma.invoice.update({
+                where: { id: parseInt(id) },
+                data: {
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: status
+                }
+            });
+            return res.status(200).json({ success: true, data: updated });
         }
 
         // 1. Get existing invoice
@@ -1365,7 +1407,8 @@ const updateInvoice = async (req, res) => {
                     totalAmount,
                     paidAmount: totalAdjustedAmount,
                     balanceAmount: totalAmount - totalAdjustedAmount,
-                    status: (totalAmount - totalAdjustedAmount) <= 0 ? 'PAID' : (totalAdjustedAmount > 0 ? 'PARTIAL' : 'UNPAID'),
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: (manualStatus === true || manualStatus === 'true') && status ? status : ((totalAmount - totalAdjustedAmount) <= 0 ? 'PAID' : (totalAdjustedAmount > 0 ? 'PARTIAL' : 'UNPAID')),
                     currency: currency !== undefined ? currency : undefined,
                     exchangeRate: exchangeRate !== undefined ? parseFloat(exchangeRate) : undefined,
                     overallDiscount: parseFloat(overallDiscount) || 0,
@@ -1715,7 +1758,27 @@ const deleteInvoice = async (req, res) => {
         }
 
         await prisma.$transaction(async (tx) => {
-            // Unlink any receipts pointing to this invoice to prevent FK Restrict errors
+            const { deleteSalesReturnHelper } = require('./salesReturnController');
+            const { deleteReceiptHelper } = require('./salesReceiptController');
+
+            // Find and delete linked sales returns
+            const linkedReturns = await tx.salesreturn.findMany({
+                where: { invoiceId: invoice.id },
+                include: { salesreturnitem: true }
+            });
+            for (const ret of linkedReturns) {
+                await deleteSalesReturnHelper(tx, ret, companyId);
+            }
+
+            // Find and delete linked receipts
+            const linkedReceipts = await tx.receipt.findMany({
+                where: { invoiceId: invoice.id }
+            });
+            for (const rec of linkedReceipts) {
+                await deleteReceiptHelper(tx, rec, companyId);
+            }
+
+            // Unlink any remaining receipts pointing to this invoice to prevent FK Restrict errors
             await tx.receipt.updateMany({
                 where: { invoiceId: invoice.id },
                 data: { invoiceId: null }
@@ -1944,5 +2007,6 @@ module.exports = {
     deleteInvoice,
     getNextNumber,
     getPublicInvoiceById,
-    cleanupOrphanedJournals
+    cleanupOrphanedJournals,
+    adjustInvoiceWithReturns
 };

@@ -538,10 +538,84 @@ const deleteReturn = async (req, res) => {
     }
 };
 
+const deletePurchaseReturnHelper = async (tx, purchaseReturn, companyId) => {
+    // 1. Revert Stock
+    for (const item of purchaseReturn.purchasereturnitem) {
+        await tx.stock.upsert({
+            where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
+            create: {
+                warehouseId: item.warehouseId,
+                productId: item.productId,
+                quantity: item.quantity,
+                initialQty: 0,
+                minOrderQty: 0
+            },
+            update: {
+                quantity: { increment: item.quantity }
+            }
+        });
+    }
+
+    // 2. Revert Ledger Balances and Vendor Balance
+    const txs = await tx.transaction.findMany({
+        where: {
+            companyId: parseInt(companyId),
+            voucherNumber: purchaseReturn.returnNumber,
+            voucherType: 'PURCHASE_RETURN'
+        }
+    });
+
+    for (const t of txs) {
+        await tx.ledger.update({
+            where: { id: t.debitLedgerId },
+            data: { currentBalance: { increment: t.amount } }
+        });
+        await tx.ledger.update({
+            where: { id: t.creditLedgerId },
+            data: { currentBalance: { increment: t.amount } }
+        });
+    }
+
+    await tx.vendor.update({
+        where: { id: purchaseReturn.vendorId },
+        data: { accountBalance: { increment: purchaseReturn.totalAmount } }
+    });
+
+    // 3. Cleanup Accounting Records
+    const journalEntryIds = [...new Set(txs.map(t => t.journalEntryId).filter(Boolean))];
+
+    await tx.transaction.deleteMany({
+        where: {
+            companyId: parseInt(companyId),
+            voucherNumber: purchaseReturn.returnNumber,
+            voucherType: 'PURCHASE_RETURN'
+        }
+    });
+
+    if (journalEntryIds.length > 0) {
+        await tx.journalentry.deleteMany({
+            where: { id: { in: journalEntryIds } }
+        });
+    }
+
+    // Delete associated inventory transactions
+    await tx.inventorytransaction.deleteMany({
+        where: {
+            companyId: parseInt(companyId),
+            reason: `Purchase Return: ${purchaseReturn.returnNumber}`
+        }
+    });
+
+    // 4. Delete Return items and document
+    await tx.purchasereturnitem.deleteMany({ where: { purchaseReturnId: purchaseReturn.id } });
+    await tx.purchasereturn.delete({ where: { id: purchaseReturn.id } });
+};
+
 module.exports = {
     createReturn,
     getReturns,
     getReturnById,
     updateReturn,
-    deleteReturn
+    deleteReturn,
+    deletePurchaseReturnHelper
 };

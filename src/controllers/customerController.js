@@ -221,6 +221,24 @@ const getAllCustomers = async (req, res) => {
             orderBy: { createdAt: 'desc' }
         });
 
+        // Calculate dynamic ledger balances to ensure they align with the Chart of Accounts
+        try {
+            const chartOfAccountsService = require('../services/chartOfAccountsService');
+            const inventoryValue = await chartOfAccountsService.calculateInventoryValue(companyId);
+            const balanceMap = await chartOfAccountsService.calculateDynamicLedgerBalances(companyId, inventoryValue);
+
+            customers.forEach(customer => {
+                if (customer.ledgerId && customer.ledger) {
+                    const entry = balanceMap.get(customer.ledgerId);
+                    if (entry) {
+                        customer.ledger.currentBalance = entry.dynamicBalance;
+                    }
+                }
+            });
+        } catch (dynamicErr) {
+            console.error('Error calculating dynamic balances in getAllCustomers:', dynamicErr);
+        }
+
         res.status(200).json({
             success: true,
             data: customers
@@ -282,6 +300,21 @@ const getCustomerById = async (req, res) => {
                 success: false,
                 message: 'Customer not found'
             });
+        }
+
+        // Calculate dynamic ledger balance to ensure it aligns with the Chart of Accounts
+        try {
+            if (customer.ledgerId && customer.ledger) {
+                const chartOfAccountsService = require('../services/chartOfAccountsService');
+                const inventoryValue = await chartOfAccountsService.calculateInventoryValue(companyId);
+                const balanceMap = await chartOfAccountsService.calculateDynamicLedgerBalances(companyId, inventoryValue);
+                const entry = balanceMap.get(customer.ledgerId);
+                if (entry) {
+                    customer.ledger.currentBalance = entry.dynamicBalance;
+                }
+            }
+        } catch (dynamicErr) {
+            console.error('Error calculating dynamic balance in getCustomerById:', dynamicErr);
         }
 
         res.status(200).json({

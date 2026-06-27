@@ -212,6 +212,24 @@ const getAllVendors = async (req, res) => {
             orderBy: { createdAt: 'desc' }
         });
 
+        // Calculate dynamic ledger balances to ensure they align with the Chart of Accounts
+        try {
+            const chartOfAccountsService = require('../services/chartOfAccountsService');
+            const inventoryValue = await chartOfAccountsService.calculateInventoryValue(companyId);
+            const balanceMap = await chartOfAccountsService.calculateDynamicLedgerBalances(companyId, inventoryValue);
+
+            vendors.forEach(vendor => {
+                if (vendor.ledgerId && vendor.ledger) {
+                    const entry = balanceMap.get(vendor.ledgerId);
+                    if (entry) {
+                        vendor.ledger.currentBalance = entry.dynamicBalance;
+                    }
+                }
+            });
+        } catch (dynamicErr) {
+            console.error('Error calculating dynamic balances in getAllVendors:', dynamicErr);
+        }
+
         res.status(200).json({
             success: true,
             data: vendors
@@ -277,6 +295,21 @@ const getVendorById = async (req, res) => {
                 success: false,
                 message: 'Vendor not found'
             });
+        }
+
+        // Calculate dynamic ledger balance to ensure it aligns with the Chart of Accounts
+        try {
+            if (vendor.ledgerId && vendor.ledger) {
+                const chartOfAccountsService = require('../services/chartOfAccountsService');
+                const inventoryValue = await chartOfAccountsService.calculateInventoryValue(companyId);
+                const balanceMap = await chartOfAccountsService.calculateDynamicLedgerBalances(companyId, inventoryValue);
+                const entry = balanceMap.get(vendor.ledgerId);
+                if (entry) {
+                    vendor.ledger.currentBalance = entry.dynamicBalance;
+                }
+            }
+        } catch (dynamicErr) {
+            console.error('Error calculating dynamic balance in getVendorById:', dynamicErr);
         }
 
         res.status(200).json({

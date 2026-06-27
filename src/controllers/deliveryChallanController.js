@@ -8,7 +8,7 @@ const createChallan = async (req, res) => {
         const {
             challanNumber, manualReference, date, customerId, salesOrderId, items, notes,
             shippingAddress, shippingCity, shippingState, shippingZipCode, shippingPhone, shippingEmail,
-            vehicleNo, carrier, transportNote, remarks, customFields
+            vehicleNo, carrier, transportNote, remarks, customFields, manualStatus, status
         } = req.body;
         const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
 
@@ -53,6 +53,8 @@ const createChallan = async (req, res) => {
                     shippingPhone,
                     shippingEmail,
                     notes,
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: (manualStatus === true || manualStatus === 'true') && status ? status : 'PENDING',
                     vehicleNo,
                     transportNote,
                     remarks,
@@ -141,10 +143,7 @@ const createChallan = async (req, res) => {
 
             // D. Update Sales Order status
             if (salesOrderId) {
-                await tx.salesorder.update({
-                    where: { id: parseInt(salesOrderId), companyId: parseInt(companyId) },
-                    data: { status: 'PARTIAL' }
-                });
+                await updateSalesOrderStatus(tx, salesOrderId);
             }
 
             return challan;
@@ -230,12 +229,23 @@ const updateChallan = async (req, res) => {
         const {
             challanNumber, date, customerId, salesOrderId, items, notes,
             shippingAddress, shippingCity, shippingState, shippingZipCode, shippingPhone, shippingEmail,
-            vehicleNo, transportNote, remarks, customFields
+            vehicleNo, transportNote, remarks, customFields, manualStatus, status, onlyUpdateStatus
         } = req.body;
         const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
 
         if (!companyId) {
             return res.status(400).json({ success: false, message: 'Company ID is required' });
+        }
+
+        if (onlyUpdateStatus === true || onlyUpdateStatus === 'true') {
+            const updated = await prisma.deliverychallan.update({
+                where: { id: parseInt(id) },
+                data: {
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: status
+                }
+            });
+            return res.status(200).json({ success: true, data: updated });
         }
 
         const existing = await prisma.deliverychallan.findFirst({
@@ -356,7 +366,7 @@ const updateChallan = async (req, res) => {
             }
 
             // Update Challan
-            return await tx.deliverychallan.update({
+            const updated = await tx.deliverychallan.update({
                 where: { id: parseInt(id), companyId: parseInt(companyId) },
                 data: {
                     challanNumber,
@@ -373,6 +383,8 @@ const updateChallan = async (req, res) => {
                     shippingPhone,
                     shippingEmail,
                     notes,
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: status,
                     transportNote,
                     remarks,
                     deliverychallanitem: {
@@ -384,6 +396,16 @@ const updateChallan = async (req, res) => {
                     customer: true
                 }
             });
+
+            // Recalculate status of old and new Sales Orders
+            if (existing.salesOrderId) {
+                await updateSalesOrderStatus(tx, existing.salesOrderId);
+            }
+            if (salesOrderId && parseInt(salesOrderId) !== existing.salesOrderId) {
+                await updateSalesOrderStatus(tx, parseInt(salesOrderId));
+            }
+
+            return updated;
         }, { timeout: 30000 });
 
         res.status(200).json({ success: true, data: result });
@@ -470,6 +492,11 @@ const deleteChallan = async (req, res) => {
             await tx.deliverychallan.delete({
                 where: { id: challan.id }
             });
+
+            // Recalculate status
+            if (challan.salesOrderId) {
+                await updateSalesOrderStatus(tx, challan.salesOrderId);
+            }
         }, { timeout: 30000 });
 
         res.status(200).json({ success: true, message: 'Delivery Challan deleted successfully' });
@@ -478,6 +505,62 @@ const deleteChallan = async (req, res) => {
         res.status(500).json({ success: false, message: error.message });
     }
 };
+
+async function updateSalesOrderStatus(tx, salesOrderId) {
+    if (!salesOrderId) return;
+    const soId = parseInt(salesOrderId);
+    if (isNaN(soId)) return;
+
+    const so = await tx.salesorder.findUnique({
+        where: { id: soId },
+        include: { salesorderitem: true }
+    });
+
+    if (!so) return;
+    if (so.manualStatus === true) return;
+
+    const challans = await tx.deliverychallan.findMany({
+        where: { salesOrderId: soId },
+        include: { deliverychallanitem: true }
+    });
+
+    const deliveredMap = {};
+    for (const dc of challans) {
+        for (const item of dc.deliverychallanitem) {
+            const pId = item.productId;
+            if (pId) {
+                deliveredMap[pId] = (deliveredMap[pId] || 0) + item.quantity;
+            }
+        }
+    }
+
+    let allCompleted = true;
+    let someDelivered = false;
+
+    for (const soItem of so.salesorderitem) {
+        const ordered = soItem.quantity || 0;
+        const delivered = deliveredMap[soItem.productId] || 0;
+
+        if (delivered < ordered) {
+            allCompleted = false;
+        }
+        if (delivered > 0) {
+            someDelivered = true;
+        }
+    }
+
+    let finalStatus = 'PENDING';
+    if (allCompleted && so.salesorderitem.length > 0) {
+        finalStatus = 'COMPLETED';
+    } else if (someDelivered) {
+        finalStatus = 'PARTIAL';
+    }
+
+    await tx.salesorder.update({
+        where: { id: soId },
+        data: { status: finalStatus }
+    });
+}
 
 module.exports = {
     createChallan,

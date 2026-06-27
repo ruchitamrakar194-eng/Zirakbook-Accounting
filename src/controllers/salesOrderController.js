@@ -5,7 +5,7 @@ const numberingService = require('../services/numberingService');
 // Create Sales Order
 const createOrder = async (req, res) => {
     try {
-        const { orderNumber, date, expectedDate, customerId, items, notes, quotationId, billingName, billingAddress, billingCity, billingState, billingZipCode, billingCountry, shippingName, shippingAddress, shippingCity, shippingState, shippingZipCode, shippingCountry, overallDiscount, overallDiscountType, customFields } = req.body;
+        const { orderNumber, date, expectedDate, customerId, items, notes, quotationId, billingName, billingAddress, billingCity, billingState, billingZipCode, billingCountry, shippingName, shippingAddress, shippingCity, shippingState, shippingZipCode, shippingCountry, overallDiscount, overallDiscountType, customFields, manualStatus, status } = req.body;
         const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
 
         if (!companyId) {
@@ -107,6 +107,8 @@ const createOrder = async (req, res) => {
                     overallDiscountType: overallDiscountType || 'percentage',
                     totalAmount: finalTotal,
                     notes,
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: (manualStatus === true || manualStatus === 'true') && status ? status : 'PENDING',
                     customFields: customFields ? (typeof customFields === 'string' ? customFields : JSON.stringify(customFields)) : null,
                     billingName,
                     billingAddress,
@@ -262,11 +264,22 @@ const getOrderById = async (req, res) => {
 const updateOrder = async (req, res) => {
     try {
         const { id } = req.params;
-        const { orderNumber, date, expectedDate, customerId, items, notes, status, billingName, billingAddress, billingCity, billingState, billingZipCode, billingCountry, shippingName, shippingAddress, shippingCity, shippingState, shippingZipCode, shippingCountry, overallDiscount, overallDiscountType, customFields } = req.body;
+        const { orderNumber, date, expectedDate, customerId, items, notes, status, billingName, billingAddress, billingCity, billingState, billingZipCode, billingCountry, shippingName, shippingAddress, shippingCity, shippingState, shippingZipCode, shippingCountry, overallDiscount, overallDiscountType, customFields, manualStatus, onlyUpdateStatus } = req.body;
         const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
 
         if (!companyId) {
             return res.status(400).json({ success: false, message: 'Company ID is required' });
+        }
+
+        if (onlyUpdateStatus === true || onlyUpdateStatus === 'true') {
+            const updated = await prisma.salesorder.update({
+                where: { id: parseInt(id) },
+                data: {
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: status
+                }
+            });
+            return res.status(200).json({ success: true, data: updated });
         }
 
         const customer = await prisma.customer.findUnique({
@@ -369,6 +382,7 @@ const updateOrder = async (req, res) => {
                     overallDiscountType: overallDiscountType || 'percentage',
                     totalAmount: finalTotal,
                     notes,
+                    manualStatus: manualStatus === true || manualStatus === 'true',
                     status,
                     customFields: customFields !== undefined ? (typeof customFields === 'string' ? customFields : JSON.stringify(customFields)) : undefined,
                     billingName,

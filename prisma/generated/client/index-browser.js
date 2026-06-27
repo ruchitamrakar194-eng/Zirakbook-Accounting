@@ -287,6 +287,7 @@ exports.Prisma.DeliverychallanScalarFieldEnum = {
   companyId: 'companyId',
   notes: 'notes',
   status: 'status',
+  manualStatus: 'manualStatus',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
   shippingAddress: 'shippingAddress',
@@ -335,6 +336,7 @@ exports.Prisma.GoodsreceiptnoteScalarFieldEnum = {
   companyId: 'companyId',
   notes: 'notes',
   status: 'status',
+  manualStatus: 'manualStatus',
   customFields: 'customFields',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
@@ -422,6 +424,7 @@ exports.Prisma.InvoiceScalarFieldEnum = {
   currency: 'currency',
   exchangeRate: 'exchangeRate',
   status: 'status',
+  manualStatus: 'manualStatus',
   salesOrderId: 'salesOrderId',
   notes: 'notes',
   createdAt: 'createdAt',
@@ -516,7 +519,9 @@ exports.Prisma.PaymentScalarFieldEnum = {
   updatedAt: 'updatedAt',
   discountAmount: 'discountAmount',
   discountLedgerId: 'discountLedgerId',
-  customFields: 'customFields'
+  customFields: 'customFields',
+  status: 'status',
+  manualStatus: 'manualStatus'
 };
 
 exports.Prisma.PaymentrecordScalarFieldEnum = {
@@ -579,6 +584,7 @@ exports.Prisma.PosinvoiceScalarFieldEnum = {
   balanceAmount: 'balanceAmount',
   paymentMode: 'paymentMode',
   status: 'status',
+  manualStatus: 'manualStatus',
   notes: 'notes',
   customFields: 'customFields',
   createdAt: 'createdAt',
@@ -646,6 +652,7 @@ exports.Prisma.PurchasebillScalarFieldEnum = {
   currency: 'currency',
   exchangeRate: 'exchangeRate',
   status: 'status',
+  manualStatus: 'manualStatus',
   notes: 'notes',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
@@ -695,6 +702,7 @@ exports.Prisma.PurchaseorderScalarFieldEnum = {
   taxAmount: 'taxAmount',
   totalAmount: 'totalAmount',
   status: 'status',
+  manualStatus: 'manualStatus',
   notes: 'notes',
   overallDiscount: 'overallDiscount',
   overallDiscountType: 'overallDiscountType',
@@ -743,6 +751,7 @@ exports.Prisma.PurchasequotationScalarFieldEnum = {
   taxAmount: 'taxAmount',
   totalAmount: 'totalAmount',
   status: 'status',
+  manualStatus: 'manualStatus',
   notes: 'notes',
   overallDiscount: 'overallDiscount',
   overallDiscountType: 'overallDiscountType',
@@ -792,6 +801,8 @@ exports.Prisma.PurchasereturnitemScalarFieldEnum = {
   warehouseId: 'warehouseId',
   quantity: 'quantity',
   rate: 'rate',
+  taxRate: 'taxRate',
+  discount: 'discount',
   amount: 'amount',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
@@ -813,7 +824,9 @@ exports.Prisma.ReceiptScalarFieldEnum = {
   updatedAt: 'updatedAt',
   discountAmount: 'discountAmount',
   discountLedgerId: 'discountLedgerId',
-  customFields: 'customFields'
+  customFields: 'customFields',
+  status: 'status',
+  manualStatus: 'manualStatus'
 };
 
 exports.Prisma.SalesorderScalarFieldEnum = {
@@ -831,6 +844,7 @@ exports.Prisma.SalesorderScalarFieldEnum = {
   overallDiscountType: 'overallDiscountType',
   totalAmount: 'totalAmount',
   status: 'status',
+  manualStatus: 'manualStatus',
   notes: 'notes',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
@@ -880,6 +894,7 @@ exports.Prisma.SalesquotationScalarFieldEnum = {
   taxAmount: 'taxAmount',
   totalAmount: 'totalAmount',
   status: 'status',
+  manualStatus: 'manualStatus',
   notes: 'notes',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt',
@@ -937,6 +952,8 @@ exports.Prisma.SalesreturnitemScalarFieldEnum = {
   warehouseId: 'warehouseId',
   quantity: 'quantity',
   rate: 'rate',
+  taxRate: 'taxRate',
+  discount: 'discount',
   amount: 'amount',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'

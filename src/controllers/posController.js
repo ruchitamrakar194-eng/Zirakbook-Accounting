@@ -18,7 +18,9 @@ const createPOSInvoice = async (req, res) => {
             accountId,   // Explicit ledger selection for payment (Cash/Bank)
             dueAccountId, // Explicit ledger selection for the sale debit (Customer/Receivable)
             payments,
-            customFields
+            customFields,
+            manualStatus,
+            status
         } = req.body;
 
         const currentCompanyId = req.user?.companyId || companyId;
@@ -154,7 +156,8 @@ const createPOSInvoice = async (req, res) => {
                     paidAmount: finalReceived,
                     balanceAmount: balance,
                     paymentMode: paymentMode || 'CASH',
-                    status: balance <= 0 ? 'Paid' : (finalReceived > 0 ? 'Partial' : 'Due'),
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: (manualStatus === true || manualStatus === 'true') && status ? status : (balance <= 0 ? 'Paid' : (finalReceived > 0 ? 'Partial' : 'Due')),
                     updatedAt: new Date(),
                     notes: notes || null,
                     customFields: customFields ? (typeof customFields === 'string' ? customFields : JSON.stringify(customFields)) : null,
@@ -414,7 +417,42 @@ const getPOSInvoices = async (req, res) => {
             },
             orderBy: { createdAt: 'desc' }
         });
-        res.status(200).json({ success: true, data: invoices });
+
+        const salesReturns = await prisma.salesreturn.findMany({
+            where: { companyId: parseInt(companyId), invoiceId: null },
+            include: {
+                salesreturnitem: {
+                    include: {
+                        product: true,
+                        warehouse: true
+                    }
+                }
+            }
+        });
+
+        const { adjustInvoiceWithReturns } = require('./salesInvoiceController');
+        const mappedInvoices = invoices.map(inv => {
+            const posReturns = salesReturns.filter(ret => {
+                if (ret.customFields) {
+                    try {
+                        const parsedCF = typeof ret.customFields === 'string'
+                            ? JSON.parse(ret.customFields)
+                            : ret.customFields;
+                        return parsedCF && parseInt(parsedCF.posInvoiceId) === inv.id;
+                    } catch (e) {
+                        return false;
+                    }
+                }
+                return false;
+            });
+            return adjustInvoiceWithReturns({
+                ...inv,
+                type: 'POS_INVOICE',
+                salesreturn: posReturns
+            });
+        });
+
+        res.status(200).json({ success: true, data: mappedInvoices });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
@@ -455,10 +493,43 @@ const getPOSInvoiceById = async (req, res) => {
             } : null
         }));
 
+        const salesReturns = await prisma.salesreturn.findMany({
+            where: { companyId: parseInt(companyId), invoiceId: null },
+            include: {
+                salesreturnitem: {
+                    include: {
+                        product: true,
+                        warehouse: true
+                    }
+                }
+            }
+        });
+
+        const { adjustInvoiceWithReturns } = require('./salesInvoiceController');
+        const posReturns = salesReturns.filter(ret => {
+            if (ret.customFields) {
+                try {
+                    const parsedCF = typeof ret.customFields === 'string'
+                        ? JSON.parse(ret.customFields)
+                        : ret.customFields;
+                    return parsedCF && parseInt(parsedCF.posInvoiceId) === invoice.id;
+                } catch (e) {
+                    return false;
+                }
+            }
+            return false;
+        });
+
+        const adjustedInvoice = adjustInvoiceWithReturns({
+            ...invoice,
+            type: 'POS_INVOICE',
+            salesreturn: posReturns
+        });
+
         res.status(200).json({
             success: true,
             data: {
-                ...invoice,
+                ...adjustedInvoice,
                 receipt: mappedReceipts
             }
         });
@@ -488,6 +559,28 @@ const deletePOSInvoice = async (req, res) => {
 
             if (!invoice || invoice.companyId !== parseInt(companyId)) {
                 throw new Error('Invoice not found or unauthorized');
+            }
+
+            const { deleteSalesReturnHelper } = require('./salesReturnController');
+
+            // Find and delete linked sales returns
+            const candidateReturns = await tx.salesreturn.findMany({
+                where: { companyId: parseInt(companyId), invoiceId: null },
+                include: { salesreturnitem: true }
+            });
+            for (const ret of candidateReturns) {
+                if (ret.customFields) {
+                    try {
+                        const parsedCF = typeof ret.customFields === 'string'
+                            ? JSON.parse(ret.customFields)
+                            : ret.customFields;
+                        if (parsedCF && parseInt(parsedCF.posInvoiceId) === invoice.id) {
+                            await deleteSalesReturnHelper(tx, ret, companyId);
+                        }
+                    } catch (e) {
+                        console.error("Error parsing salesReturn customFields inside deletePOSInvoice:", e);
+                    }
+                }
             }
 
             // 1. Reverse Accounting
@@ -623,7 +716,40 @@ const getPublicPOSInvoiceById = async (req, res) => {
         });
 
         if (!invoice) return res.status(404).json({ success: false, message: 'POS Invoice not found' });
-        res.status(200).json({ success: true, data: invoice });
+
+        const salesReturns = await prisma.salesreturn.findMany({
+            where: { companyId: invoice.companyId, invoiceId: null },
+            include: {
+                salesreturnitem: {
+                    include: {
+                        product: true,
+                        warehouse: true
+                    }
+                }
+            }
+        });
+
+        const posReturns = salesReturns.filter(ret => {
+            if (ret.customFields) {
+                try {
+                    const parsedCF = typeof ret.customFields === 'string'
+                        ? JSON.parse(ret.customFields)
+                        : ret.customFields;
+                    return parsedCF && parseInt(parsedCF.posInvoiceId) === invoice.id;
+                } catch (e) {
+                    return false;
+                }
+            }
+            return false;
+        });
+
+        res.status(200).json({
+            success: true,
+            data: {
+                ...invoice,
+                salesreturn: posReturns
+            }
+        });
     } catch (error) {
         res.status(500).json({ success: false, message: error.message });
     }
@@ -644,10 +770,24 @@ const updatePOSInvoice = async (req, res) => {
             accountId,
             dueAccountId,
             payments,
-            customFields
+            customFields,
+            manualStatus,
+            status,
+            onlyUpdateStatus
         } = req.body;
 
         const currentCompanyId = req.user?.companyId || companyId;
+
+        if (onlyUpdateStatus === true || onlyUpdateStatus === 'true') {
+            const updated = await prisma.posinvoice.update({
+                where: { id: parseInt(id) },
+                data: {
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: status
+                }
+            });
+            return res.status(200).json({ success: true, data: updated });
+        }
 
         if (!currentCompanyId || !items || items.length === 0) {
             return res.status(400).json({ success: false, message: 'Invalid data provided' });
@@ -861,7 +1001,8 @@ const updatePOSInvoice = async (req, res) => {
                     paidAmount: finalReceived,
                     balanceAmount: balance,
                     paymentMode: paymentMode || 'CASH',
-                    status: balance <= 0 ? 'Paid' : (finalReceived > 0 ? 'Partial' : 'Due'),
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: (manualStatus === true || manualStatus === 'true') && status ? status : (balance <= 0 ? 'Paid' : (finalReceived > 0 ? 'Partial' : 'Due')),
                     updatedAt: new Date(),
                     notes: notes || null,
                     customFields: customFields !== undefined ? (typeof customFields === 'string' ? customFields : JSON.stringify(customFields)) : undefined,

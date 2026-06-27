@@ -5,7 +5,7 @@ const numberingService = require('../services/numberingService');
 // Create Customer Receipt (Payment)
 const createReceipt = async (req, res) => {
     try {
-        const { receiptNumber, date, customerId, invoiceId, amount, paymentMode, referenceNumber, cashBankAccountId, notes, discountAmount, discountLedgerId, allocations } = req.body;
+        const { receiptNumber, date, customerId, invoiceId, amount, paymentMode, referenceNumber, cashBankAccountId, notes, discountAmount, discountLedgerId, allocations, manualStatus, status } = req.body;
         const companyId = req.user?.companyId || req.body.companyId;
 
         if (!receiptNumber || !customerId || !amount || !cashBankAccountId) {
@@ -82,7 +82,9 @@ const createReceipt = async (req, res) => {
                     companyId: parseInt(companyId),
                     notes,
                     discountAmount: parseFloat(discountAmount || 0),
-                    discountLedgerId: discountLedgerId ? parseInt(discountLedgerId) : null
+                    discountLedgerId: discountLedgerId ? parseInt(discountLedgerId) : null,
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: (manualStatus === true || manualStatus === 'true') && status ? status : 'CLEARED'
                 }
             });
 
@@ -248,8 +250,19 @@ const createReceipt = async (req, res) => {
 const updateReceipt = async (req, res) => {
     try {
         const { id } = req.params;
-        const { date, amount, paymentMode, referenceNumber, cashBankAccountId, notes, discountAmount, discountLedgerId, allocations } = req.body;
+        const { date, amount, paymentMode, referenceNumber, cashBankAccountId, notes, discountAmount, discountLedgerId, allocations, manualStatus, status, onlyUpdateStatus } = req.body;
         const companyId = req.user?.companyId || req.body.companyId;
+
+        if (onlyUpdateStatus === true || onlyUpdateStatus === 'true') {
+            const updated = await prisma.receipt.update({
+                where: { id: parseInt(id) },
+                data: {
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: status
+                }
+            });
+            return res.status(200).json({ success: true, data: updated });
+        }
 
         const existingReceipt = await prisma.receipt.findUnique({
             where: { id: parseInt(id) },
@@ -409,7 +422,9 @@ const updateReceipt = async (req, res) => {
                     notes,
                     discountAmount: finalDiscount,
                     discountLedgerId: finalDiscountLedgerId,
-                    invoiceId: receiptInvoiceId
+                    invoiceId: receiptInvoiceId,
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: status !== undefined ? status : undefined
                 }
             });
 
@@ -927,10 +942,110 @@ const getReceiptById = async (req, res) => {
     }
 };
 
+const deleteReceiptHelper = async (tx, receipt, companyId) => {
+    const fullReceipt = await tx.receipt.findUnique({
+        where: { id: receipt.id },
+        include: {
+            allocations: { include: { invoice: true } }
+        }
+    });
+
+    if (!fullReceipt) return;
+
+    // Reverse effects on standard invoices
+    const oldDiscount = fullReceipt.discountAmount || 0;
+    for (let i = 0; i < fullReceipt.allocations.length; i++) {
+        const oldAlloc = fullReceipt.allocations[i];
+        const invoice = await tx.invoice.findUnique({ where: { id: oldAlloc.invoiceId } });
+        if (invoice) {
+            const oldAllocDiscount = (i === 0) ? oldDiscount : 0;
+            const revPaid = Math.max(0, (invoice.paidAmount || 0) - oldAlloc.amount - oldAllocDiscount);
+            const revBalance = (invoice.totalAmount || 0) - revPaid;
+            await tx.invoice.update({
+                where: { id: oldAlloc.invoiceId },
+                data: {
+                    paidAmount: revPaid,
+                    balanceAmount: revBalance,
+                    status: revBalance <= 0 ? 'PAID' : (revPaid > 0 ? 'PARTIAL' : 'UNPAID')
+                }
+            });
+        }
+    }
+
+    // Reverse effects on POS invoices
+    const oldPosTransactions = await tx.transaction.findMany({
+        where: {
+            receiptId: fullReceipt.id,
+            posInvoiceId: { not: null },
+            voucherType: 'RECEIPT'
+        }
+    });
+
+    for (const t of oldPosTransactions) {
+        const posInvoice = await tx.posinvoice.findUnique({ where: { id: t.posInvoiceId } });
+        if (posInvoice) {
+            const revPaid = Math.max(0, (posInvoice.paidAmount || 0) - t.amount);
+            const revBalance = (posInvoice.totalAmount || 0) - revPaid;
+            await tx.posinvoice.update({
+                where: { id: t.posInvoiceId },
+                data: {
+                    paidAmount: revPaid,
+                    balanceAmount: revBalance,
+                    status: revBalance <= 0 ? 'Paid' : (revPaid > 0 ? 'Partial' : 'Due')
+                }
+            });
+        }
+    }
+
+    // Calculate old ledger amounts to revert ledger balances
+    let oldLedgerAmount = 0;
+    let oldLedgerDiscount = 0;
+    const oldAllocatedSum = fullReceipt.allocations.reduce((sum, a) => sum + a.amount, 0);
+    const oldUnallocatedAmount = fullReceipt.amount - oldAllocatedSum;
+
+    for (let i = 0; i < fullReceipt.allocations.length; i++) {
+        const oldAlloc = fullReceipt.allocations[i];
+        const rate = oldAlloc.invoice?.exchangeRate || 1.0;
+        oldLedgerAmount += oldAlloc.amount * rate;
+        if (i === 0) {
+            oldLedgerDiscount += oldDiscount * rate;
+        }
+    }
+    oldLedgerAmount += oldUnallocatedAmount;
+
+    if (fullReceipt.cashBankAccountId) {
+        await tx.ledger.update({
+            where: { id: fullReceipt.cashBankAccountId },
+            data: { currentBalance: { decrement: oldLedgerAmount } }
+        });
+    }
+
+    if (fullReceipt.discountLedgerId && oldLedgerDiscount > 0) {
+        await tx.ledger.update({
+            where: { id: fullReceipt.discountLedgerId },
+            data: { currentBalance: { decrement: oldLedgerDiscount } }
+        });
+    }
+
+    const customer = await tx.customer.findUnique({ where: { id: fullReceipt.customerId } });
+    if (customer && customer.ledgerId) {
+        await tx.ledger.update({
+            where: { id: customer.ledgerId },
+            data: { currentBalance: { increment: oldLedgerAmount + oldLedgerDiscount } }
+        });
+    }
+
+    // Delete transactions, allocations and receipt
+    await tx.transaction.deleteMany({ where: { receiptId: fullReceipt.id } });
+    await tx.receiptinvoiceallocation.deleteMany({ where: { receiptId: fullReceipt.id } });
+    await tx.receipt.delete({ where: { id: fullReceipt.id } });
+};
+
 module.exports = {
     createReceipt,
     getReceipts,
     getReceiptById,
     updateReceipt,
-    deleteReceipt
+    deleteReceipt,
+    deleteReceiptHelper
 };

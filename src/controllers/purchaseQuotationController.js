@@ -5,7 +5,7 @@ const numberingService = require('../services/numberingService');
 // Create Purchase Quotation
 const createQuotation = async (req, res) => {
     try {
-        const { quotationNumber, manualReference, date, expiryDate, vendorId, items, notes, terms, attachments, overallDiscount, overallDiscountType, customFields } = req.body;
+        const { quotationNumber, manualReference, date, expiryDate, vendorId, items, notes, terms, attachments, overallDiscount, overallDiscountType, customFields, manualStatus, status } = req.body;
         const companyId = req.user?.companyId || req.body.companyId;
 
         if (!quotationNumber || !vendorId || !items || items.length === 0) {
@@ -102,6 +102,8 @@ const createQuotation = async (req, res) => {
                     notes,
                     terms,
                     attachments,
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: (manualStatus === true || manualStatus === 'true') && status ? status : 'DRAFT',
                     customFields: customFields ? (typeof customFields === 'string' ? customFields : JSON.stringify(customFields)) : null,
                     purchasequotationitem: {
                         create: quotationItems.map(i => ({
@@ -200,8 +202,19 @@ const getQuotationById = async (req, res) => {
 const updateQuotation = async (req, res) => {
     try {
         const { id } = req.params;
-        const { quotationNumber, manualReference, date, expiryDate, vendorId, items, notes, terms, attachments, status, overallDiscount, overallDiscountType, customFields } = req.body;
+        const { quotationNumber, manualReference, date, expiryDate, vendorId, items, notes, terms, attachments, status, overallDiscount, overallDiscountType, customFields, manualStatus, onlyUpdateStatus } = req.body;
         const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
+
+        if (onlyUpdateStatus === true || onlyUpdateStatus === 'true') {
+            const updated = await prisma.purchasequotation.update({
+                where: { id: parseInt(id) },
+                data: {
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: status
+                }
+            });
+            return res.status(200).json({ success: true, data: updated });
+        }
 
         const existing = await prisma.purchasequotation.findFirst({
             where: { id: parseInt(id), companyId: parseInt(companyId) }
@@ -307,6 +320,7 @@ const updateQuotation = async (req, res) => {
                     notes,
                     terms,
                     attachments,
+                    manualStatus: manualStatus === true || manualStatus === 'true',
                     status,
                     customFields: customFields !== undefined ? (typeof customFields === 'string' ? customFields : JSON.stringify(customFields)) : undefined,
                     purchasequotationitem: {

@@ -51,7 +51,9 @@ const adjustBillWithReturns = (bill) => {
     const adjustedBalance = Math.max(0, adjustedTotal - paidAmount);
 
     let adjustedStatus = bill.status;
-    if (adjustedBalance <= 0) {
+    if (bill.manualStatus === true || bill.manualStatus === 'true') {
+        adjustedStatus = bill.status;
+    } else if (adjustedBalance <= 0) {
         adjustedStatus = 'PAID';
     } else if (paidAmount > 0) {
         adjustedStatus = 'PARTIAL';
@@ -70,7 +72,7 @@ const adjustBillWithReturns = (bill) => {
 // Create Purchase Bill (Financial Posting)
 const createBill = async (req, res) => {
     try {
-        const { billNumber, date, dueDate, vendorId, purchaseOrderId, grnId, items, notes, discountAmount, taxAmount, totalAmount, billingName, billingAddress, billingCity, billingState, billingZipCode, billingCountry, shippingName, shippingAddress, shippingCity, shippingState, shippingZipCode, shippingCountry, overallDiscount, overallDiscountType, currency, exchangeRate, customFields } = req.body;
+        const { billNumber, date, dueDate, vendorId, purchaseOrderId, grnId, items, notes, discountAmount, taxAmount, totalAmount, billingName, billingAddress, billingCity, billingState, billingZipCode, billingCountry, shippingName, shippingAddress, shippingCity, shippingState, shippingZipCode, shippingCountry, overallDiscount, overallDiscountType, currency, exchangeRate, customFields, manualStatus, status } = req.body;
         const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
 
         const docCurrency = currency || 'USD';
@@ -194,7 +196,8 @@ const createBill = async (req, res) => {
                     balanceAmount: totalAmountValue,
                     currency: docCurrency,
                     exchangeRate: docExchangeRate,
-                    status: 'UNPAID',
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: (manualStatus === true || manualStatus === 'true') && status ? status : 'UNPAID',
                     notes,
                     billingName,
                     billingAddress,
@@ -272,12 +275,12 @@ const createBill = async (req, res) => {
                     data: {
                         paidAmount: finalPaid,
                         balanceAmount: finalBalance,
-                        status: finalBalance <= 0 ? 'PAID' : 'PARTIAL'
+                        status: (manualStatus === true || manualStatus === 'true') && status ? status : (finalBalance <= 0 ? 'PAID' : 'PARTIAL')
                     }
                 });
                 bill.paidAmount = finalPaid;
                 bill.balanceAmount = finalBalance;
-                bill.status = finalBalance <= 0 ? 'PAID' : 'PARTIAL';
+                bill.status = (manualStatus === true || manualStatus === 'true') && status ? status : (finalBalance <= 0 ? 'PAID' : 'PARTIAL');
             }
 
             // Update linked PO status if exists
@@ -699,7 +702,27 @@ const deleteBill = async (req, res) => {
         if (!bill) return res.status(404).json({ success: false, message: 'Bill not found' });
 
         await prisma.$transaction(async (tx) => {
-            // Unlink any payments pointing to this purchase bill to prevent FK Restrict errors
+            const { deletePurchaseReturnHelper } = require('./purchaseReturnController');
+            const { deletePaymentHelper } = require('./paymentController');
+
+            // Find and delete linked purchase returns
+            const linkedReturns = await tx.purchasereturn.findMany({
+                where: { purchaseBillId: bill.id },
+                include: { purchasereturnitem: true }
+            });
+            for (const ret of linkedReturns) {
+                await deletePurchaseReturnHelper(tx, ret, companyId);
+            }
+
+            // Find and delete linked payments
+            const linkedPayments = await tx.payment.findMany({
+                where: { purchaseBillId: bill.id }
+            });
+            for (const pay of linkedPayments) {
+                await deletePaymentHelper(tx, pay, companyId);
+            }
+
+            // Unlink any remaining payments pointing to this purchase bill to prevent FK Restrict errors
             await tx.payment.updateMany({
                 where: { purchaseBillId: bill.id },
                 data: { purchaseBillId: null }
@@ -875,9 +898,23 @@ const updateBill = async (req, res) => {
             overallDiscountType,
             currency,
             exchangeRate,
-            customFields
+            customFields,
+            manualStatus,
+            status,
+            onlyUpdateStatus
         } = req.body;
         const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
+
+        if (onlyUpdateStatus === true || onlyUpdateStatus === 'true') {
+            const updatedBill = await prisma.purchasebill.update({
+                where: { id: parseInt(id) },
+                data: {
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: status
+                }
+            });
+            return res.status(200).json({ success: true, data: updatedBill });
+        }
 
         const updated = await prisma.$transaction(async (tx) => {
             const oldBill = await tx.purchasebill.findFirst({
@@ -1386,7 +1423,8 @@ const updateBill = async (req, res) => {
                     discountAmount: totalDiscount,
                     paidAmount: totalAdjustedAmount,
                     balanceAmount: totalAmountValue - totalAdjustedAmount,
-                    status: (totalAmountValue - totalAdjustedAmount) <= 0 ? 'PAID' : (totalAdjustedAmount > 0 ? 'PARTIAL' : 'UNPAID'),
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: (manualStatus === true || manualStatus === 'true') && status ? status : ((totalAmountValue - totalAdjustedAmount) <= 0 ? 'PAID' : (totalAdjustedAmount > 0 ? 'PARTIAL' : 'UNPAID')),
                     currency: currency !== undefined ? currency : undefined,
                     exchangeRate: exchangeRate !== undefined ? parseFloat(exchangeRate) : undefined,
                     billingName,

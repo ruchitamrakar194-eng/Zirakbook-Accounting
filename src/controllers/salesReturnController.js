@@ -24,6 +24,10 @@ const createReturn = async (req, res) => {
         }
 
         let totalAmount = 0;
+        let returnedSubtotal = 0;
+        let returnedDiscount = 0;
+        let returnedTax = 0;
+
         const returnItems = items.map(item => {
             const qty = parseFloat(item.quantity) || 0;
             const rate = parseFloat(item.rate) || 0;
@@ -32,13 +36,19 @@ const createReturn = async (req, res) => {
             const taxableAmount = Math.max(0, (qty * rate) - discount);
             const taxAmount = (taxableAmount * taxRate) / 100;
             const amount = taxableAmount + taxAmount;
+            
             totalAmount += amount;
+            returnedSubtotal += (qty * rate);
+            returnedDiscount += discount;
+            returnedTax += taxAmount;
+
             return {
                 productId: parseInt(item.productId),
                 warehouseId: parseInt(item.warehouseId),
                 quantity: qty,
                 rate: rate,
                 taxRate: taxRate,
+                discount: discount,
                 amount: amount
             };
         });
@@ -173,28 +183,24 @@ const createReturn = async (req, res) => {
             console.log("[createReturn] tx: Updating invoice/posinvoice balance...");
             if (invoiceId) {
                 if (isPosInvoice) {
-                    const newPaid = posInvoice.paidAmount + totalAmount;
-                    const newBalance = Math.max(0, posInvoice.totalAmount - newPaid);
+                    const newBalance = Math.max(0, posInvoice.balanceAmount - totalAmount);
                     await tx.posinvoice.update({
                         where: { id: posInvoice.id },
                         data: {
-                            paidAmount: newPaid,
                             balanceAmount: newBalance,
-                            status: newBalance <= 0 ? 'Paid' : 'Partial'
+                            status: newBalance <= 0 ? 'Paid' : (posInvoice.paidAmount > 0 ? 'Partial' : 'Due')
                         }
                     });
                 } else {
                     const invoice = await tx.invoice.findUnique({ where: { id: parseInt(invoiceId) } });
                     if (invoice) {
-                        const newPaid = invoice.paidAmount + totalAmount;
-                        const newBalance = Math.max(0, invoice.totalAmount - newPaid);
+                        const newBalance = Math.max(0, invoice.balanceAmount - totalAmount);
 
                         await tx.invoice.update({
                             where: { id: invoice.id },
                             data: {
-                                paidAmount: newPaid,
                                 balanceAmount: newBalance,
-                                status: newBalance <= 0 ? 'PAID' : (newPaid > 0 ? 'PARTIAL' : 'UNPAID')
+                                status: newBalance <= 0 ? 'PAID' : (invoice.paidAmount > 0 ? 'PARTIAL' : 'UNPAID')
                             }
                         });
                     }
@@ -203,34 +209,91 @@ const createReturn = async (req, res) => {
             console.log("[createReturn] tx: Balance updates complete.");
 
             // 4. Accounting Entry (Main)
+            console.log("[createReturn] tx: Resolving tax and discount ledgers...");
+            const taxLedger = await resolveLedger(tx, 'Tax', 'LIABILITIES');
+            const discountAllowedLedger = await resolveLedger(tx, 'Discount Allowed on Sale', 'EXPENSES');
+
             console.log("[createReturn] tx: Updating accounting ledger balances...");
-            // DR Sales Return, CR Customer
+            // DR Sales Return (gross portion)
             await tx.ledger.update({
                 where: { id: returnLedger.id },
-                data: { currentBalance: { increment: totalAmount } }
+                data: { currentBalance: { increment: returnedSubtotal } }
             });
 
+            // CR Customer (net portion: subtotal + tax - discount)
             await tx.ledger.update({
                 where: { id: customer.ledgerId },
                 data: { currentBalance: { decrement: totalAmount } }
             });
 
-            console.log("[createReturn] tx: Creating financial transaction...");
+            // DR Tax Payable (VAT)
+            if (returnedTax > 0 && taxLedger) {
+                await tx.ledger.update({
+                    where: { id: taxLedger.id },
+                    data: { currentBalance: { decrement: returnedTax } }
+                });
+            }
+
+            // CR Discount Allowed on Sale
+            if (returnedDiscount > 0 && discountAllowedLedger) {
+                await tx.ledger.update({
+                    where: { id: discountAllowedLedger.id },
+                    data: { currentBalance: { decrement: returnedDiscount } }
+                });
+            }
+
+            // Entry 1: DR Sales Return, CR Customer (gross portion)
             await tx.transaction.create({
                 data: {
                     date: new Date(date),
                     voucherType: 'SALES_RETURN',
-                    voucherNumber: autoVoucherNo, // Use auto voucher number
+                    voucherNumber: autoVoucherNo,
                     debitLedgerId: returnLedger.id,
                     creditLedgerId: customer.ledgerId,
-                    amount: totalAmount,
-                    narration: `Sales Return from ${customer.name}${invoiceId ? ' for Invoice ID: ' + invoiceId : ''}`,
+                    amount: returnedSubtotal,
+                    narration: `Sales Return (Revenue portion) from ${customer.name}${invoiceId ? ' for Invoice ID: ' + invoiceId : ''}`,
                     companyId: parseInt(companyId),
                     invoiceId: isPosInvoice ? null : (invoiceId ? parseInt(invoiceId) : null),
                     posInvoiceId: isPosInvoice ? parseInt(invoiceId) : null
                 }
             });
-            console.log("[createReturn] tx: Financial transaction created.");
+
+            // Entry 2 (if tax > 0): DR Tax Payable, CR Customer
+            if (returnedTax > 0 && taxLedger) {
+                await tx.transaction.create({
+                    data: {
+                        date: new Date(date),
+                        voucherType: 'SALES_RETURN',
+                        voucherNumber: autoVoucherNo,
+                        debitLedgerId: taxLedger.id,
+                        creditLedgerId: customer.ledgerId,
+                        amount: returnedTax,
+                        narration: `Sales Return Tax Reversal from ${customer.name}${invoiceId ? ' for Invoice ID: ' + invoiceId : ''}`,
+                        companyId: parseInt(companyId),
+                        invoiceId: isPosInvoice ? null : (invoiceId ? parseInt(invoiceId) : null),
+                        posInvoiceId: isPosInvoice ? parseInt(invoiceId) : null
+                    }
+                });
+            }
+
+            // Entry 3 (if discount > 0): DR Customer, CR Discount Allowed on Sale
+            if (returnedDiscount > 0 && discountAllowedLedger) {
+                await tx.transaction.create({
+                    data: {
+                        date: new Date(date),
+                        voucherType: 'SALES_RETURN',
+                        voucherNumber: autoVoucherNo,
+                        debitLedgerId: customer.ledgerId,
+                        creditLedgerId: discountAllowedLedger.id,
+                        amount: returnedDiscount,
+                        narration: `Sales Return Discount Reversal from ${customer.name}${invoiceId ? ' for Invoice ID: ' + invoiceId : ''}`,
+                        companyId: parseInt(companyId),
+                        invoiceId: isPosInvoice ? null : (invoiceId ? parseInt(invoiceId) : null),
+                        posInvoiceId: isPosInvoice ? parseInt(invoiceId) : null
+                    }
+                });
+            }
+            console.log("[createReturn] tx: Detailed double-entry financial transactions complete.");
 
             // 5. COGS and Inventory Reversal (DR Inventory, CR COGS)
             let totalReturnCOGS = 0;
@@ -270,7 +333,7 @@ const createReturn = async (req, res) => {
 
 
             return salesReturn;
-        }, { timeout: 30000 });
+        }, { timeout: 90000 });
 
         await numberingService.incrementNumber(companyId, 'salesreturn', returnNumber);
         res.status(201).json({ success: true, data: result });
@@ -421,14 +484,31 @@ const updateReturn = async (req, res) => {
         }
 
         let totalAmount = 0;
+        let returnedSubtotal = 0;
+        let returnedDiscount = 0;
+        let returnedTax = 0;
+
         const returnItems = items.map(item => {
-            const amount = parseFloat(item.quantity) * parseFloat(item.rate);
+            const qty = parseFloat(item.quantity) || 0;
+            const rate = parseFloat(item.rate) || 0;
+            const discount = parseFloat(item.discount) || 0;
+            const taxRate = parseFloat(item.taxRate) || 0;
+            const taxableAmount = Math.max(0, (qty * rate) - discount);
+            const taxAmount = (taxableAmount * taxRate) / 100;
+            const amount = taxableAmount + taxAmount;
+            
             totalAmount += amount;
+            returnedSubtotal += (qty * rate);
+            returnedDiscount += discount;
+            returnedTax += taxAmount;
+
             return {
                 productId: parseInt(item.productId),
                 warehouseId: parseInt(item.warehouseId),
-                quantity: parseFloat(item.quantity),
-                rate: parseFloat(item.rate),
+                quantity: qty,
+                rate: rate,
+                taxRate: taxRate,
+                discount: discount,
                 amount: amount
             };
         });
@@ -529,38 +609,54 @@ const updateReturn = async (req, res) => {
             if (existingPosInvoiceId) {
                 const oldPosInvoice = await tx.posinvoice.findUnique({ where: { id: existingPosInvoiceId } });
                 if (oldPosInvoice) {
-                    const revPaid = Math.max(0, (oldPosInvoice.paidAmount || 0) - existing.totalAmount);
-                    const revBalance = Math.max(0, (oldPosInvoice.totalAmount || 0) - revPaid);
+                    const revBalance = Math.min(oldPosInvoice.totalAmount - oldPosInvoice.paidAmount, oldPosInvoice.balanceAmount + existing.totalAmount);
                     await tx.posinvoice.update({
                         where: { id: oldPosInvoice.id },
                         data: {
-                            paidAmount: revPaid,
                             balanceAmount: revBalance,
-                            status: revBalance <= 0 ? 'Paid' : 'Partial'
+                            status: revBalance <= 0 ? 'Paid' : (oldPosInvoice.paidAmount > 0 ? 'Partial' : 'Due')
                         }
                     });
                 }
             } else if (existing.invoiceId) {
                 const oldInvoice = await tx.invoice.findUnique({ where: { id: existing.invoiceId } });
                 if (oldInvoice) {
-                    const revPaid = Math.max(0, (oldInvoice.paidAmount || 0) - existing.totalAmount);
-                    const revBalance = (oldInvoice.totalAmount || 0) - revPaid;
+                    const revBalance = Math.min(oldInvoice.totalAmount - oldInvoice.paidAmount, oldInvoice.balanceAmount + existing.totalAmount);
                     await tx.invoice.update({
                         where: { id: oldInvoice.id },
                         data: {
-                            paidAmount: revPaid,
                             balanceAmount: revBalance,
-                            status: revBalance <= 0 ? 'PAID' : (revPaid > 0 ? 'PARTIAL' : 'UNPAID')
+                            status: revBalance <= 0 ? 'PAID' : (oldInvoice.paidAmount > 0 ? 'PARTIAL' : 'UNPAID')
                         }
                     });
                 }
             }
 
             // 3. Reverse Accounting Entries for old return
+            console.log("[updateReturn] tx: Reversing accounting entries for old return...");
+            const taxLedger = await resolveLedger(tx, 'Tax', 'LIABILITIES');
+            const discountAllowedLedger = await resolveLedger(tx, 'Discount Allowed on Sale', 'EXPENSES');
+
+            let oldSubtotal = 0;
+            let oldTax = 0;
+            let oldDiscount = 0;
+            for (const item of existing.salesreturnitem) {
+                const qty = item.quantity || 0;
+                const rate = item.rate || 0;
+                const discount = item.discount || 0;
+                const taxRate = item.taxRate || 0;
+                const taxable = Math.max(0, (qty * rate) - discount);
+                const taxAmt = (taxable * taxRate) / 100;
+                
+                oldSubtotal += (qty * rate);
+                oldDiscount += discount;
+                oldTax += taxAmt;
+            }
+
             if (returnLedger) {
                 await tx.ledger.update({
                     where: { id: returnLedger.id },
-                    data: { currentBalance: { decrement: existing.totalAmount } }
+                    data: { currentBalance: { decrement: oldSubtotal } }
                 });
             }
 
@@ -568,6 +664,20 @@ const updateReturn = async (req, res) => {
                 await tx.ledger.update({
                     where: { id: existing.customer.ledgerId },
                     data: { currentBalance: { increment: existing.totalAmount } }
+                });
+            }
+
+            if (oldTax > 0 && taxLedger) {
+                await tx.ledger.update({
+                    where: { id: taxLedger.id },
+                    data: { currentBalance: { increment: oldTax } }
+                });
+            }
+
+            if (oldDiscount > 0 && discountAllowedLedger) {
+                await tx.ledger.update({
+                    where: { id: discountAllowedLedger.id },
+                    data: { currentBalance: { increment: oldDiscount } }
                 });
             }
 
@@ -666,28 +776,24 @@ const updateReturn = async (req, res) => {
             // 6. Apply New Invoice Balance if linked
             if (invoiceId) {
                 if (isPosInvoice) {
-                    const newPaid = posInvoice.paidAmount + totalAmount;
-                    const newBalance = Math.max(0, posInvoice.totalAmount - newPaid);
+                    const newBalance = Math.max(0, posInvoice.balanceAmount - totalAmount);
                     await tx.posinvoice.update({
                         where: { id: posInvoice.id },
                         data: {
-                            paidAmount: newPaid,
                             balanceAmount: newBalance,
-                            status: newBalance <= 0 ? 'Paid' : 'Partial'
+                            status: newBalance <= 0 ? 'Paid' : (posInvoice.paidAmount > 0 ? 'Partial' : 'Due')
                         }
                     });
                 } else {
                     const invoice = await tx.invoice.findUnique({ where: { id: parseInt(invoiceId) } });
                     if (invoice) {
-                        const newPaid = invoice.paidAmount + totalAmount;
-                        const newBalance = Math.max(0, invoice.totalAmount - newPaid);
+                        const newBalance = Math.max(0, invoice.balanceAmount - totalAmount);
 
                         await tx.invoice.update({
                             where: { id: invoice.id },
                             data: {
-                                paidAmount: newPaid,
                                 balanceAmount: newBalance,
-                                status: newBalance <= 0 ? 'PAID' : (newPaid > 0 ? 'PARTIAL' : 'UNPAID')
+                                status: newBalance <= 0 ? 'PAID' : (invoice.paidAmount > 0 ? 'PARTIAL' : 'UNPAID')
                             }
                         });
                     }
@@ -695,17 +801,36 @@ const updateReturn = async (req, res) => {
             }
 
             // 7. Apply New Accounting Entry (Main)
-            // DR Sales Return, CR Customer
+            console.log("[updateReturn] tx: Applying detailed sales return accounting entries...");
+            // DR Sales Return (gross portion)
             await tx.ledger.update({
                 where: { id: returnLedger.id },
-                data: { currentBalance: { increment: totalAmount } }
+                data: { currentBalance: { increment: returnedSubtotal } }
             });
 
+            // CR Customer (net portion: subtotal + tax - discount)
             await tx.ledger.update({
                 where: { id: customer.ledgerId },
                 data: { currentBalance: { decrement: totalAmount } }
             });
 
+            // DR Tax Payable (VAT)
+            if (returnedTax > 0 && taxLedger) {
+                await tx.ledger.update({
+                    where: { id: taxLedger.id },
+                    data: { currentBalance: { decrement: returnedTax } }
+                });
+            }
+
+            // CR Discount Allowed on Sale
+            if (returnedDiscount > 0 && discountAllowedLedger) {
+                await tx.ledger.update({
+                    where: { id: discountAllowedLedger.id },
+                    data: { currentBalance: { decrement: returnedDiscount } }
+                });
+            }
+
+            // Entry 1: DR Sales Return, CR Customer (gross portion)
             await tx.transaction.create({
                 data: {
                     date: new Date(date),
@@ -713,13 +838,49 @@ const updateReturn = async (req, res) => {
                     voucherNumber: existing.autoVoucherNo,
                     debitLedgerId: returnLedger.id,
                     creditLedgerId: customer.ledgerId,
-                    amount: totalAmount,
-                    narration: `Sales Return from ${customer.name}${invoiceId ? ' for Invoice ID: ' + invoiceId : ''}`,
+                    amount: returnedSubtotal,
+                    narration: `Sales Return (Revenue portion) from ${customer.name}${invoiceId ? ' for Invoice ID: ' + invoiceId : ''}`,
                     companyId: parseInt(companyId),
                     invoiceId: isPosInvoice ? null : (invoiceId ? parseInt(invoiceId) : null),
                     posInvoiceId: isPosInvoice ? parseInt(invoiceId) : null
                 }
             });
+
+            // Entry 2 (if tax > 0): DR Tax Payable, CR Customer
+            if (returnedTax > 0 && taxLedger) {
+                await tx.transaction.create({
+                    data: {
+                        date: new Date(date),
+                        voucherType: 'SALES_RETURN',
+                        voucherNumber: existing.autoVoucherNo,
+                        debitLedgerId: taxLedger.id,
+                        creditLedgerId: customer.ledgerId,
+                        amount: returnedTax,
+                        narration: `Sales Return Tax Reversal from ${customer.name}${invoiceId ? ' for Invoice ID: ' + invoiceId : ''}`,
+                        companyId: parseInt(companyId),
+                        invoiceId: isPosInvoice ? null : (invoiceId ? parseInt(invoiceId) : null),
+                        posInvoiceId: isPosInvoice ? parseInt(invoiceId) : null
+                    }
+                });
+            }
+
+            // Entry 3 (if discount > 0): DR Customer, CR Discount Allowed on Sale
+            if (returnedDiscount > 0 && discountAllowedLedger) {
+                await tx.transaction.create({
+                    data: {
+                        date: new Date(date),
+                        voucherType: 'SALES_RETURN',
+                        voucherNumber: existing.autoVoucherNo,
+                        debitLedgerId: customer.ledgerId,
+                        creditLedgerId: discountAllowedLedger.id,
+                        amount: returnedDiscount,
+                        narration: `Sales Return Discount Reversal from ${customer.name}${invoiceId ? ' for Invoice ID: ' + invoiceId : ''}`,
+                        companyId: parseInt(companyId),
+                        invoiceId: isPosInvoice ? null : (invoiceId ? parseInt(invoiceId) : null),
+                        posInvoiceId: isPosInvoice ? parseInt(invoiceId) : null
+                    }
+                });
+            }
 
             // 8. COGS and Inventory Reversal (DR Inventory, CR COGS)
             let totalReturnCOGS = 0;
@@ -757,7 +918,7 @@ const updateReturn = async (req, res) => {
             }
 
             return updated;
-        }, { timeout: 30000 });
+        }, { timeout: 90000 });
 
         res.status(200).json({ success: true, data: result });
     } catch (error) {
@@ -826,61 +987,100 @@ const deleteReturn = async (req, res) => {
             if (existingPosInvoiceId) {
                 const invoice = await tx.posinvoice.findUnique({ where: { id: existingPosInvoiceId } });
                 if (invoice) {
-                    const revPaid = Math.max(0, (invoice.paidAmount || 0) - salesReturn.totalAmount);
-                    const revBalance = Math.max(0, (invoice.totalAmount || 0) - revPaid);
+                    const revBalance = Math.min(invoice.totalAmount - invoice.paidAmount, invoice.balanceAmount + salesReturn.totalAmount);
 
                     await tx.posinvoice.update({
                         where: { id: invoice.id },
                         data: {
-                            paidAmount: revPaid,
                             balanceAmount: revBalance,
-                            status: revBalance <= 0 ? 'Paid' : 'Partial'
+                            status: revBalance <= 0 ? 'Paid' : (invoice.paidAmount > 0 ? 'Partial' : 'Due')
                         }
                     });
                 }
             } else if (salesReturn.invoiceId) {
                 const invoice = await tx.invoice.findUnique({ where: { id: salesReturn.invoiceId } });
                 if (invoice) {
-                    const revPaid = Math.max(0, (invoice.paidAmount || 0) - salesReturn.totalAmount);
-                    const revBalance = (invoice.totalAmount || 0) - revPaid;
+                    const revBalance = Math.min(invoice.totalAmount - invoice.paidAmount, invoice.balanceAmount + salesReturn.totalAmount);
 
                     await tx.invoice.update({
                         where: { id: invoice.id },
                         data: {
-                            paidAmount: revPaid,
                             balanceAmount: revBalance,
-                            status: revBalance <= 0 ? 'PAID' : (revPaid > 0 ? 'PARTIAL' : 'UNPAID')
+                            status: revBalance <= 0 ? 'PAID' : (invoice.paidAmount > 0 ? 'PARTIAL' : 'UNPAID')
                         }
                     });
                 }
             }
 
             // 3. Reverse Accounting Entry
-            let returnLedger = await tx.ledger.findFirst({
-                where: { companyId: parseInt(companyId), name: { contains: 'Return' }, accountgroup: { type: 'EXPENSES' } }
-            });
-            if (!returnLedger) {
-                returnLedger = await tx.ledger.findFirst({
-                    where: { companyId: parseInt(companyId), name: { contains: 'Return' }, accountgroup: { type: 'INCOME' } }
+            const resolveLedger = async (txOrPrisma, namePattern, type) => {
+                let ledger = await txOrPrisma.ledger.findFirst({
+                    where: { companyId: parseInt(companyId), name: { contains: namePattern } }
                 });
+                if (!ledger) {
+                    const group = await txOrPrisma.accountgroup.findFirst({ where: { companyId: parseInt(companyId), type: type } });
+                    if (group) {
+                        ledger = await txOrPrisma.ledger.create({
+                            data: {
+                                name: namePattern,
+                                groupId: group.id,
+                                companyId: parseInt(companyId),
+                                isControlAccount: true
+                            }
+                        });
+                    }
+                }
+                return ledger;
+            };
+
+            const returnLedger = await resolveLedger(tx, 'Sales Return', 'EXPENSES') || await resolveLedger(tx, 'Sales Return', 'INCOME');
+            const taxLedger = await resolveLedger(tx, 'Tax', 'LIABILITIES');
+            const discountAllowedLedger = await resolveLedger(tx, 'Discount Allowed on Sale', 'EXPENSES');
+
+            let oldSubtotal = 0;
+            let oldTax = 0;
+            let oldDiscount = 0;
+            for (const item of salesReturn.salesreturnitem) {
+                const qty = item.quantity || 0;
+                const rate = item.rate || 0;
+                const discount = item.discount || 0;
+                const taxRate = item.taxRate || 0;
+                const taxable = Math.max(0, (qty * rate) - discount);
+                const taxAmt = (taxable * taxRate) / 100;
+                
+                oldSubtotal += (qty * rate);
+                oldDiscount += discount;
+                oldTax += taxAmt;
             }
 
             if (returnLedger) {
                 await tx.ledger.update({
                     where: { id: returnLedger.id },
-                    data: { currentBalance: { decrement: salesReturn.totalAmount } }
+                    data: { currentBalance: { decrement: oldSubtotal } }
                 });
             }
 
             if (salesReturn.customer && salesReturn.customer.ledgerId) {
-                const customerLedger = await tx.ledger.findUnique({ where: { id: salesReturn.customer.ledgerId } });
-                if (customerLedger) {
-                    await tx.ledger.update({
-                        where: { id: salesReturn.customer.ledgerId },
-                        data: { currentBalance: { increment: salesReturn.totalAmount } }
-                    });
-                }
+                await tx.ledger.update({
+                    where: { id: salesReturn.customer.ledgerId },
+                    data: { currentBalance: { increment: salesReturn.totalAmount } }
+                });
             }
+
+            if (oldTax > 0 && taxLedger) {
+                await tx.ledger.update({
+                    where: { id: taxLedger.id },
+                    data: { currentBalance: { increment: oldTax } }
+                });
+            }
+
+            if (oldDiscount > 0 && discountAllowedLedger) {
+                await tx.ledger.update({
+                    where: { id: discountAllowedLedger.id },
+                    data: { currentBalance: { increment: oldDiscount } }
+                });
+            }
+
 
             // Reverse COGS Reversal entries if they exist
             const cogsRevTrans = await tx.transaction.findFirst({
@@ -923,7 +1123,7 @@ const deleteReturn = async (req, res) => {
                 where: { id: parseInt(id) }
             });
         }, {
-            timeout: 30000
+            timeout: 90000
         });
 
         res.status(200).json({ success: true, message: 'Sales return deleted successfully' });
@@ -933,10 +1133,149 @@ const deleteReturn = async (req, res) => {
     }
 };
 
+const deleteSalesReturnHelper = async (tx, salesReturn, companyId) => {
+    // 1. Reverse Inventory Logic (Decrement Stock)
+    for (const item of salesReturn.salesreturnitem) {
+        await tx.stock.upsert({
+            where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
+            create: {
+                warehouseId: item.warehouseId,
+                productId: item.productId,
+                quantity: -item.quantity,
+                initialQty: 0,
+                minOrderQty: 0
+            },
+            update: {
+                quantity: { decrement: item.quantity }
+            }
+        });
+
+        await tx.inventorytransaction.deleteMany({
+            where: {
+                productId: item.productId,
+                toWarehouseId: item.warehouseId,
+                reason: `Sales Return: ${salesReturn.returnNumber}`,
+                companyId: parseInt(companyId)
+            }
+        });
+    }
+
+    // 2. Accounting Entry Reversion
+    const resolveLedger = async (txOrPrisma, namePattern, type) => {
+        let ledger = await txOrPrisma.ledger.findFirst({
+            where: { companyId: parseInt(companyId), name: { contains: namePattern } }
+        });
+        if (!ledger) {
+            const group = await txOrPrisma.accountgroup.findFirst({ where: { companyId: parseInt(companyId), type: type } });
+            if (group) {
+                ledger = await txOrPrisma.ledger.create({
+                    data: {
+                        name: namePattern,
+                        groupId: group.id,
+                        companyId: parseInt(companyId),
+                        isControlAccount: true
+                    }
+                });
+            }
+        }
+        return ledger;
+    };
+
+    const returnLedger = await resolveLedger(tx, 'Sales Return', 'EXPENSES') || await resolveLedger(tx, 'Sales Return', 'INCOME');
+    const taxLedger = await resolveLedger(tx, 'Tax', 'LIABILITIES');
+    const discountAllowedLedger = await resolveLedger(tx, 'Discount Allowed on Sale', 'EXPENSES');
+
+    let oldSubtotal = 0;
+    let oldTax = 0;
+    let oldDiscount = 0;
+    for (const item of salesReturn.salesreturnitem) {
+        const qty = item.quantity || 0;
+        const rate = item.rate || 0;
+        const discount = item.discount || 0;
+        const taxRate = item.taxRate || 0;
+        const taxable = Math.max(0, (qty * rate) - discount);
+        const taxAmt = (taxable * taxRate) / 100;
+        
+        oldSubtotal += (qty * rate);
+        oldDiscount += discount;
+        oldTax += taxAmt;
+    }
+
+    if (returnLedger) {
+        await tx.ledger.update({
+            where: { id: returnLedger.id },
+            data: { currentBalance: { decrement: oldSubtotal } }
+        });
+    }
+
+    if (salesReturn.customer && salesReturn.customer.ledgerId) {
+        await tx.ledger.update({
+            where: { id: salesReturn.customer.ledgerId },
+            data: { currentBalance: { increment: salesReturn.totalAmount } }
+        });
+    }
+
+    if (oldTax > 0 && taxLedger) {
+        await tx.ledger.update({
+            where: { id: taxLedger.id },
+            data: { currentBalance: { increment: oldTax } }
+        });
+    }
+
+    if (oldDiscount > 0 && discountAllowedLedger) {
+        await tx.ledger.update({
+            where: { id: discountAllowedLedger.id },
+            data: { currentBalance: { increment: oldDiscount } }
+        });
+    }
+
+    // Reverse COGS Reversal entries
+    const cogsRevTrans = await tx.transaction.findFirst({
+        where: {
+            companyId: parseInt(companyId),
+            voucherNumber: `COGS-REV-${salesReturn.autoVoucherNo}`,
+            voucherType: 'JOURNAL'
+        }
+    });
+
+    if (cogsRevTrans) {
+        await tx.ledger.update({
+            where: { id: cogsRevTrans.debitLedgerId },
+            data: { currentBalance: { decrement: cogsRevTrans.amount } }
+        });
+        await tx.ledger.update({
+            where: { id: cogsRevTrans.creditLedgerId },
+            data: { currentBalance: { increment: cogsRevTrans.amount } }
+        });
+
+        await tx.transaction.delete({
+            where: { id: cogsRevTrans.id }
+        });
+    }
+
+    // Delete Transactions and Sales Return Items/Record
+    await tx.transaction.deleteMany({
+        where: {
+            voucherNumber: salesReturn.autoVoucherNo,
+            voucherType: 'SALES_RETURN',
+            companyId: parseInt(companyId)
+        }
+    });
+
+    await tx.salesreturnitem.deleteMany({
+        where: { salesReturnId: salesReturn.id }
+    });
+
+    await tx.salesreturn.delete({
+        where: { id: salesReturn.id }
+    });
+};
+
 module.exports = {
     createReturn,
     getReturns,
     getReturnById,
     updateReturn,
-    deleteReturn
+    deleteReturn,
+    deleteSalesReturnHelper
 };

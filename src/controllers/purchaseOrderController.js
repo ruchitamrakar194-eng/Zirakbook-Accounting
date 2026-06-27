@@ -5,7 +5,7 @@ const numberingService = require('../services/numberingService');
 // Create Purchase Order (Direct or from Quotation)
 const createOrder = async (req, res) => {
     try {
-        const { orderNumber, date, expectedDate, vendorId, items, notes, quotationId, overallDiscount, overallDiscountType, customFields } = req.body;
+        const { orderNumber, date, expectedDate, vendorId, items, notes, quotationId, overallDiscount, overallDiscountType, customFields, manualStatus, status } = req.body;
         const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
 
         if (!orderNumber || !vendorId || !items || items.length === 0) {
@@ -99,6 +99,8 @@ const createOrder = async (req, res) => {
                     overallDiscountType: overallDiscountType || 'percentage',
                     totalAmount: finalTotal,
                     notes,
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: (manualStatus === true || manualStatus === 'true') && status ? status : 'PENDING',
                     customFields: customFields ? (typeof customFields === 'string' ? customFields : JSON.stringify(customFields)) : null,
                     purchaseorderitem: {
                         create: orderItems.map(i => ({
@@ -208,8 +210,19 @@ const getOrderById = async (req, res) => {
 const updateOrder = async (req, res) => {
     try {
         const { id } = req.params;
-        const { orderNumber, date, expectedDate, vendorId, items, notes, status, overallDiscount, overallDiscountType, customFields } = req.body;
+        const { orderNumber, date, expectedDate, vendorId, items, notes, status, overallDiscount, overallDiscountType, customFields, manualStatus, onlyUpdateStatus } = req.body;
         const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
+
+        if (onlyUpdateStatus === true || onlyUpdateStatus === 'true') {
+            const updated = await prisma.purchaseorder.update({
+                where: { id: parseInt(id) },
+                data: {
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: status
+                }
+            });
+            return res.status(200).json({ success: true, data: updated });
+        }
 
         const existing = await prisma.purchaseorder.findFirst({
             where: { id: parseInt(id), companyId: parseInt(companyId) }
@@ -311,6 +324,7 @@ const updateOrder = async (req, res) => {
                     overallDiscountType: overallDiscountType || 'percentage',
                     totalAmount: finalTotal,
                     notes,
+                    manualStatus: manualStatus === true || manualStatus === 'true',
                     status: (status === 'OPEN' || !status) ? 'PENDING' : status,
                     customFields: customFields !== undefined ? (typeof customFields === 'string' ? customFields : JSON.stringify(customFields)) : undefined,
                     purchaseorderitem: {

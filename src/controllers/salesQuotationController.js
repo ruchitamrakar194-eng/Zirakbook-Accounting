@@ -5,7 +5,7 @@ const numberingService = require('../services/numberingService');
 // Create Sales Quotation
 const createQuotation = async (req, res) => {
     try {
-        const { quotationNumber, date, expiryDate, customerId, items, notes, overallDiscount, overallDiscountType, customFields } = req.body;
+        const { quotationNumber, date, expiryDate, customerId, items, notes, overallDiscount, overallDiscountType, customFields, manualStatus, status } = req.body;
         const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
 
         if (!companyId) {
@@ -105,6 +105,8 @@ const createQuotation = async (req, res) => {
                         return baseTotal - (parseFloat(overallDiscount) || 0);
                     })(),
                     notes,
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: (manualStatus === true || manualStatus === 'true') && status ? status : 'DRAFT',
                     salesquotationitem: {
                         create: quotationItems.map(i => ({
                             productId: i.productId,
@@ -213,11 +215,22 @@ const getQuotationById = async (req, res) => {
 const updateQuotation = async (req, res) => {
     try {
         const { id } = req.params;
-        const { quotationNumber, date, expiryDate, customerId, items, notes, status, overallDiscount, overallDiscountType, customFields } = req.body;
+        const { quotationNumber, date, expiryDate, customerId, items, notes, status, overallDiscount, overallDiscountType, customFields, manualStatus, onlyUpdateStatus } = req.body;
         const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
 
         if (!companyId) {
             return res.status(400).json({ success: false, message: 'Company ID is required' });
+        }
+
+        if (onlyUpdateStatus === true || onlyUpdateStatus === 'true') {
+            const updated = await prisma.salesquotation.update({
+                where: { id: parseInt(id) },
+                data: {
+                    manualStatus: manualStatus === true || manualStatus === 'true',
+                    status: status
+                }
+            });
+            return res.status(200).json({ success: true, data: updated });
         }
 
         const customer = await prisma.customer.findUnique({
@@ -321,6 +334,7 @@ const updateQuotation = async (req, res) => {
                         return baseTotal - (parseFloat(overallDiscount) || 0);
                     })(),
                     notes,
+                    manualStatus: manualStatus === true || manualStatus === 'true',
                     status,
                     salesquotationitem: {
                         create: quotationItems.map(i => ({
