@@ -176,8 +176,6 @@ app.get('/', (req, res) => {
     res.send('Accounting Software Backend is running');
 });
 
-
-
 // Error Handling Middleware
 app.use((err, req, res, next) => {
     console.error('--- ERROR START ---');
