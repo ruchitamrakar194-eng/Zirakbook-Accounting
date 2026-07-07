@@ -197,6 +197,7 @@ exports.Prisma.CompanyScalarFieldEnum = {
   zip: 'zip',
   country: 'country',
   currency: 'currency',
+  originalCurrency: 'originalCurrency',
   bankName: 'bankName',
   accountHolder: 'accountHolder',
   accountNumber: 'accountNumber',
@@ -300,7 +301,8 @@ exports.Prisma.DeliverychallanScalarFieldEnum = {
   carrier: 'carrier',
   transportNote: 'transportNote',
   remarks: 'remarks',
-  customFields: 'customFields'
+  customFields: 'customFields',
+  invoiceId: 'invoiceId'
 };
 
 exports.Prisma.DeliverychallanitemScalarFieldEnum = {
@@ -411,6 +413,7 @@ exports.Prisma.InventorytransactionScalarFieldEnum = {
 exports.Prisma.InvoiceScalarFieldEnum = {
   id: 'id',
   invoiceNumber: 'invoiceNumber',
+  manualReference: 'manualReference',
   date: 'date',
   dueDate: 'dueDate',
   customerId: 'customerId',
@@ -444,7 +447,9 @@ exports.Prisma.InvoiceScalarFieldEnum = {
   shippingState: 'shippingState',
   shippingZipCode: 'shippingZipCode',
   shippingCountry: 'shippingCountry',
-  customFields: 'customFields'
+  customFields: 'customFields',
+  carNumber: 'carNumber',
+  salespersonId: 'salespersonId'
 };
 
 exports.Prisma.InvoiceitemScalarFieldEnum = {
@@ -670,7 +675,10 @@ exports.Prisma.PurchasebillScalarFieldEnum = {
   shippingState: 'shippingState',
   shippingZipCode: 'shippingZipCode',
   shippingCountry: 'shippingCountry',
-  customFields: 'customFields'
+  customFields: 'customFields',
+  carNumber: 'carNumber',
+  manualReference: 'manualReference',
+  salespersonId: 'salespersonId'
 };
 
 exports.Prisma.PurchasebillitemScalarFieldEnum = {
@@ -692,6 +700,7 @@ exports.Prisma.PurchasebillitemScalarFieldEnum = {
 exports.Prisma.PurchaseorderScalarFieldEnum = {
   id: 'id',
   orderNumber: 'orderNumber',
+  manualReference: 'manualReference',
   date: 'date',
   expectedDate: 'expectedDate',
   vendorId: 'vendorId',
@@ -719,6 +728,7 @@ exports.Prisma.PurchaseorderScalarFieldEnum = {
   shippingZipCode: 'shippingZipCode',
   shippingCountry: 'shippingCountry',
   customFields: 'customFields',
+  terms: 'terms',
   createdAt: 'createdAt',
   updatedAt: 'updatedAt'
 };
@@ -832,6 +842,7 @@ exports.Prisma.ReceiptScalarFieldEnum = {
 exports.Prisma.SalesorderScalarFieldEnum = {
   id: 'id',
   orderNumber: 'orderNumber',
+  manualReference: 'manualReference',
   date: 'date',
   expectedDate: 'expectedDate',
   customerId: 'customerId',
@@ -860,7 +871,8 @@ exports.Prisma.SalesorderScalarFieldEnum = {
   shippingState: 'shippingState',
   shippingZipCode: 'shippingZipCode',
   shippingCountry: 'shippingCountry',
-  customFields: 'customFields'
+  customFields: 'customFields',
+  terms: 'terms'
 };
 
 exports.Prisma.SalesorderitemScalarFieldEnum = {
@@ -883,6 +895,7 @@ exports.Prisma.SalesorderitemScalarFieldEnum = {
 exports.Prisma.SalesquotationScalarFieldEnum = {
   id: 'id',
   quotationNumber: 'quotationNumber',
+  manualReference: 'manualReference',
   date: 'date',
   expiryDate: 'expiryDate',
   customerId: 'customerId',
@@ -908,7 +921,8 @@ exports.Prisma.SalesquotationScalarFieldEnum = {
   shippingCity: 'shippingCity',
   shippingState: 'shippingState',
   shippingZipCode: 'shippingZipCode',
-  customFields: 'customFields'
+  customFields: 'customFields',
+  terms: 'terms'
 };
 
 exports.Prisma.SalesquotationitemScalarFieldEnum = {
@@ -1256,6 +1270,14 @@ exports.Prisma.AuditlogScalarFieldEnum = {
   createdAt: 'createdAt'
 };
 
+exports.Prisma.SalespersonScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  phone: 'phone',
+  email: 'email',
+  companyId: 'companyId'
+};
+
 exports.Prisma.SortOrder = {
   asc: 'asc',
   desc: 'desc'
@@ -1282,7 +1304,8 @@ exports.banktransaction_transactionType = exports.$Enums.banktransaction_transac
 exports.deliverychallan_status = exports.$Enums.deliverychallan_status = {
   PENDING: 'PENDING',
   DELIVERED: 'DELIVERED',
-  CANCELLED: 'CANCELLED'
+  CANCELLED: 'CANCELLED',
+  CONVERTED: 'CONVERTED'
 };
 
 exports.expenseentry_expenseType = exports.$Enums.expenseentry_expenseType = {
@@ -1334,7 +1357,8 @@ exports.invoice_status = exports.$Enums.invoice_status = {
   UNPAID: 'UNPAID',
   PARTIAL: 'PARTIAL',
   PAID: 'PAID',
-  CANCELLED: 'CANCELLED'
+  CANCELLED: 'CANCELLED',
+  COMPLETED: 'COMPLETED'
 };
 
 exports.payment_paymentMode = exports.$Enums.payment_paymentMode = {
@@ -1350,14 +1374,16 @@ exports.purchasebill_status = exports.$Enums.purchasebill_status = {
   UNPAID: 'UNPAID',
   PARTIAL: 'PARTIAL',
   PAID: 'PAID',
-  CANCELLED: 'CANCELLED'
+  CANCELLED: 'CANCELLED',
+  COMPLETED: 'COMPLETED'
 };
 
 exports.purchaseorder_status = exports.$Enums.purchaseorder_status = {
   PENDING: 'PENDING',
   PARTIAL: 'PARTIAL',
   COMPLETED: 'COMPLETED',
-  CANCELLED: 'CANCELLED'
+  CANCELLED: 'CANCELLED',
+  CONVERTED: 'CONVERTED'
 };
 
 exports.purchasequotation_status = exports.$Enums.purchasequotation_status = {
@@ -1365,7 +1391,8 @@ exports.purchasequotation_status = exports.$Enums.purchasequotation_status = {
   SENT: 'SENT',
   ACCEPTED: 'ACCEPTED',
   DECLINED: 'DECLINED',
-  EXPIRED: 'EXPIRED'
+  EXPIRED: 'EXPIRED',
+  CONVERTED: 'CONVERTED'
 };
 
 exports.purchasereturn_status = exports.$Enums.purchasereturn_status = {
@@ -1388,7 +1415,8 @@ exports.salesorder_status = exports.$Enums.salesorder_status = {
   PENDING: 'PENDING',
   PARTIAL: 'PARTIAL',
   COMPLETED: 'COMPLETED',
-  CANCELLED: 'CANCELLED'
+  CANCELLED: 'CANCELLED',
+  CONVERTED: 'CONVERTED'
 };
 
 exports.salesquotation_status = exports.$Enums.salesquotation_status = {
@@ -1396,7 +1424,8 @@ exports.salesquotation_status = exports.$Enums.salesquotation_status = {
   SENT: 'SENT',
   ACCEPTED: 'ACCEPTED',
   DECLINED: 'DECLINED',
-  EXPIRED: 'EXPIRED'
+  EXPIRED: 'EXPIRED',
+  CONVERTED: 'CONVERTED'
 };
 
 exports.salesreturn_status = exports.$Enums.salesreturn_status = {
@@ -1498,7 +1527,8 @@ exports.Prisma.ModelName = {
   receiptinvoiceallocation: 'receiptinvoiceallocation',
   paymentbillallocation: 'paymentbillallocation',
   transaction_numbering: 'transaction_numbering',
-  auditlog: 'auditlog'
+  auditlog: 'auditlog',
+  salesperson: 'salesperson'
 };
 
 /**

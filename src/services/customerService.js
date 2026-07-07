@@ -1,4 +1,5 @@
 const prisma = require('../config/prisma');
+const { getConversionRate, getCompanyCurrency, getCompanyHistoricalCurrency } = require('../utils/currencyConverter');
 
 // Create Customer with Auto-Ledger Creation
 const createCustomer = async (data) => {
@@ -46,6 +47,45 @@ const createCustomer = async (data) => {
                 }
             });
 
+            const openingBal = parseFloat(data.openingBalance || 0);
+            if (openingBal !== 0) {
+                let obeLedger = await tx.ledger.findFirst({
+                    where: { companyId: data.companyId, name: 'Opening Balance Equity' }
+                });
+
+                if (!obeLedger) {
+                    const equityGroup = await tx.accountgroup.findFirst({
+                        where: { companyId: data.companyId, type: 'EQUITY' }
+                    });
+                    if (equityGroup) {
+                        obeLedger = await tx.ledger.create({
+                            data: {
+                                name: 'Opening Balance Equity',
+                                groupId: equityGroup.id,
+                                companyId: data.companyId,
+                                isControlAccount: true
+                            }
+                        });
+                    }
+                }
+
+                if (obeLedger) {
+                    const isDrNormal = ['ASSETS', 'EXPENSES'].includes(accountsReceivableSubGroup.group?.type || 'ASSETS');
+                    await tx.transaction.create({
+                        data: {
+                            date: new Date(),
+                            amount: Math.abs(openingBal),
+                            debitLedgerId: isDrNormal ? ledger.id : obeLedger.id,
+                            creditLedgerId: isDrNormal ? obeLedger.id : ledger.id,
+                            voucherType: 'JOURNAL',
+                            voucherNumber: `OB-${ledger.id}`,
+                            narration: `Opening Balance for ${ledger.name}`,
+                            companyId: data.companyId
+                        }
+                    });
+                }
+            }
+
             // Update customer with ledger ID
             const updatedCustomer = await tx.customer.update({
                 where: { id: customer.id },
@@ -91,7 +131,23 @@ const getCustomers = async (companyId) => {
             orderBy: { createdAt: 'desc' }
         });
 
-        return customers;
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const histCurr = await getCompanyHistoricalCurrency(companyId);
+        const rate = await getConversionRate(histCurr, companyCurrency);
+
+        return customers.map(c => {
+            if (c.ledger) {
+                c.ledger.currentBalance = (c.ledger.currentBalance || 0) * rate;
+            }
+            if (c.invoices) {
+                c.invoices = c.invoices.map(inv => ({
+                    ...inv,
+                    totalAmount: (inv.totalAmount || 0) * rate,
+                    balanceAmount: (inv.balanceAmount || 0) * rate
+                }));
+            }
+            return c;
+        });
     } catch (error) {
         console.error('Error fetching customers:', error);
         throw error;
@@ -124,6 +180,23 @@ const getCustomerById = async (id, companyId) => {
                 }
             }
         });
+
+        if (customer) {
+            const companyCurrency = await getCompanyCurrency(companyId);
+            const histCurr = await getCompanyHistoricalCurrency(companyId);
+            const rate = await getConversionRate(histCurr, companyCurrency);
+
+            if (customer.ledger) {
+                customer.ledger.currentBalance = (customer.ledger.currentBalance || 0) * rate;
+            }
+            if (customer.invoices) {
+                customer.invoices = customer.invoices.map(inv => ({
+                    ...inv,
+                    totalAmount: (inv.totalAmount || 0) * rate,
+                    balanceAmount: (inv.balanceAmount || 0) * rate
+                }));
+            }
+        }
 
         return customer;
     } catch (error) {

@@ -8,5 +8,6 @@ router.get('/', authenticateToken, salesOrderController.getOrders);
 router.get('/:id', authenticateToken, salesOrderController.getOrderById);
 router.put('/:id', authenticateToken, salesOrderController.updateOrder);
 router.delete('/:id', authenticateToken, salesOrderController.deleteOrder);
+router.post('/:id/convert', authenticateToken, salesOrderController.convertToDeliveryChallan);
 
 module.exports = router;

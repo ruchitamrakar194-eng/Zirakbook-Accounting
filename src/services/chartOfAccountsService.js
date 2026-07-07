@@ -1,4 +1,5 @@
 const prisma = require('../config/prisma');
+const { getConversionRate, getCompanyCurrency, getCompanyHistoricalCurrency } = require('../utils/currencyConverter');
 
 const calculateInventoryValue = async (companyId) => {
     try {
@@ -9,7 +10,7 @@ const calculateInventoryValue = async (companyId) => {
 
         let totalValue = 0;
         stocks.forEach(s => {
-            const price = s.product.purchasePrice || s.product.initialCost || 0;
+            const price = s.product.averageCost || s.product.purchasePrice || s.product.initialCost || 0;
             totalValue += (s.quantity * price);
         });
         return totalValue;
@@ -155,6 +156,10 @@ const calculateDynamicLedgerBalances = async (companyId, inventoryValue) => {
             })
         ]);
 
+        const companyCurrency = await getCompanyCurrency(companyIdInt);
+        const histCurr = await getCompanyHistoricalCurrency(companyIdInt);
+        const rate = await getConversionRate(histCurr, companyCurrency);
+
         const debitMap = new Map(debitSums.map(d => [d.debitLedgerId, d._sum.amount || 0]));
         const creditMap = new Map(creditSums.map(c => [c.creditLedgerId, c._sum.amount || 0]));
 
@@ -170,18 +175,19 @@ const calculateDynamicLedgerBalances = async (companyId, inventoryValue) => {
             const isInventory = l.name.toLowerCase().includes('inventory asset');
             const isRetainedEarnings = l.name.toLowerCase().includes('retained earnings');
             const groupType = l.accountgroup?.type;
-            const opening = l.openingBalance || 0;
-            const txnDebit = debitMap.get(l.id) || 0;
-            const txnCredit = creditMap.get(l.id) || 0;
+            const opening = (l.openingBalance || 0) * rate;
+            const txnDebit = (debitMap.get(l.id) || 0) * rate;
+            const txnCredit = (creditMap.get(l.id) || 0) * rate;
 
             let dynamicBalance;
             if (isInventory) {
-                dynamicBalance = inventoryValue;
+                dynamicBalance = inventoryValue; // already in base currency (INR) — no conversion needed
             } else if (isOBE || isRetainedEarnings) {
                 dynamicBalance = 0; // Will be set after totals
             } else if (['ASSETS', 'EXPENSES'].includes(groupType)) {
                 dynamicBalance = opening + txnDebit - txnCredit;
             } else {
+                //  dynamicBalance = txnCredit - txnDebit;
                 dynamicBalance = opening + txnCredit - txnDebit;
             }
 
@@ -195,7 +201,7 @@ const calculateDynamicLedgerBalances = async (companyId, inventoryValue) => {
             });
 
             if (!isOBE && !isRetainedEarnings) {
-                if (groupType === 'ASSETS') totalAssets += isInventory ? inventoryValue : dynamicBalance;
+                if (groupType === 'ASSETS') totalAssets += dynamicBalance;
                 else if (groupType === 'LIABILITIES') totalLiabilities += dynamicBalance;
                 else if (groupType === 'EQUITY') totalOtherEquity += dynamicBalance;
                 else if (groupType === 'INCOME') totalIncome += dynamicBalance;
@@ -206,10 +212,9 @@ const calculateDynamicLedgerBalances = async (companyId, inventoryValue) => {
         // Calculate dynamic profit/loss and set Retained Earnings
         const netProfit = totalIncome - totalExpenses;
         const reLedger = ledgers.find(l => l.name.toLowerCase().includes('retained earnings'));
-        const reOpening = reLedger?.openingBalance || 0;
         const reTxnDebit = reLedger ? (debitMap.get(reLedger.id) || 0) : 0;
         const reTxnCredit = reLedger ? (creditMap.get(reLedger.id) || 0) : 0;
-        const dynamicRetainedEarnings = reOpening + reTxnCredit - reTxnDebit + netProfit;
+        const dynamicRetainedEarnings = reTxnCredit - reTxnDebit + netProfit;
 
         // Add dynamic Retained Earnings to totalOtherEquity for correct OBE calculation
         totalOtherEquity += dynamicRetainedEarnings;
@@ -449,9 +454,16 @@ const getChartOfAccounts = async (companyId, filters = {}) => {
         const inventoryValue = await calculateInventoryValue(companyId);
         const balanceMap = await calculateDynamicLedgerBalances(companyId, inventoryValue);
 
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const histCurr = await getCompanyHistoricalCurrency(companyId);
+        const rate = await getConversionRate(histCurr, companyCurrency);
+
         const applyDynamic = (l) => {
             const entry = balanceMap.get(l.id);
-            if (entry) l.currentBalance = entry.dynamicBalance;
+            if (entry) {
+                l.currentBalance = entry.dynamicBalance;
+                l.openingBalance = (l.openingBalance || 0) * rate;
+            }
         };
 
         groups.forEach(group => {
@@ -510,8 +522,8 @@ const resolveGroupType = (accountType) => {
         'non_current_asset': 'ASSETS',
         'current_liability': 'LIABILITIES',
         'long_term_liability': 'LIABILITIES',
-        'share_capital': 'LIABILITIES',
-        'retained_earnings': 'LIABILITIES',
+        'share_capital': 'EQUITY',
+        'retained_earnings': 'EQUITY',
         'owners_equity': 'EQUITY',
         'sales_revenue': 'INCOME',
         'other_revenue': 'INCOME',
@@ -669,7 +681,13 @@ const getLedgerById = async (id, companyId) => {
             const inventoryValue = await calculateInventoryValue(companyId);
             const balanceMap = await calculateDynamicLedgerBalances(companyId, inventoryValue);
             const entry = balanceMap.get(ledger.id);
-            if (entry) ledger.currentBalance = entry.dynamicBalance;
+            if (entry) {
+                ledger.currentBalance = entry.dynamicBalance;
+                const companyCurrency = await getCompanyCurrency(companyId);
+                const histCurr = await getCompanyHistoricalCurrency(companyId);
+                const rate = await getConversionRate(histCurr, companyCurrency);
+                ledger.openingBalance = (ledger.openingBalance || 0) * rate;
+            }
         }
 
         return ledger;
@@ -700,6 +718,19 @@ const getLedgerTransactions = async (ledgerId, companyId) => {
                     include: {
                         customer: {
                             select: { id: true, name: true, nameArabic: true, phone: true, email: true }
+                        },
+                        invoiceitem: {
+                            include: {
+                                product: {
+                                    select: { id: true, name: true, sku: true, unit: true }
+                                },
+                                service: {
+                                    select: { id: true, name: true, sku: true }
+                                },
+                                warehouse: {
+                                    select: { id: true, name: true }
+                                }
+                            }
                         }
                     }
                 },
@@ -707,6 +738,16 @@ const getLedgerTransactions = async (ledgerId, companyId) => {
                     include: {
                         vendor: {
                             select: { id: true, name: true, nameArabic: true, phone: true, email: true }
+                        },
+                        purchasebillitem: {
+                            include: {
+                                product: {
+                                    select: { id: true, name: true, sku: true, unit: true }
+                                },
+                                warehouse: {
+                                    select: { id: true, name: true }
+                                }
+                            }
                         }
                     }
                 },
@@ -728,6 +769,16 @@ const getLedgerTransactions = async (ledgerId, companyId) => {
                     include: {
                         customer: {
                             select: { id: true, name: true, nameArabic: true, phone: true, email: true }
+                        },
+                        posinvoiceitem: {
+                            include: {
+                                product: {
+                                    select: { id: true, name: true, sku: true, unit: true }
+                                },
+                                warehouse: {
+                                    select: { id: true, name: true }
+                                }
+                            }
                         }
                     }
                 },
@@ -736,9 +787,14 @@ const getLedgerTransactions = async (ledgerId, companyId) => {
             orderBy: { date: 'desc' }
         });
 
-        // Normalize relation fields to support frontend camelCase access
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const histCurr = await getCompanyHistoricalCurrency(companyId);
+        const rate = await getConversionRate(histCurr, companyCurrency);
+
+        // Normalize relation fields and scale amount to active base currency
         const normalized = transactions.map(t => ({
             ...t,
+            amount: (t.amount || 0) * rate,
             invoice: t.invoice ?? null,
             purchaseBill: t.purchasebill ?? t.purchaseBill ?? null,
             receipt: t.receipt ?? null,
@@ -765,8 +821,8 @@ const getLedgerTransactions = async (ledgerId, companyId) => {
 
             const isDebitNormal = ['ASSETS', 'EXPENSES'].includes(entry.groupType);
             const actualBalance = isDebitNormal
-                ? (opening + actualTxnDebit - actualTxnCredit)
-                : (opening + actualTxnCredit - actualTxnDebit);
+                ? (actualTxnDebit - actualTxnCredit)
+                : (actualTxnCredit - actualTxnDebit);
 
             const diff = entry.dynamicBalance - actualBalance;
 

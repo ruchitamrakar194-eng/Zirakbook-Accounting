@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { getConversionRate, getCompanyCurrency, getCompanyHistoricalCurrency } = require('../utils/currencyConverter');
 
 // Helper to calculate total inventory value for a company as of now
 const calculateInventoryValue = async (companyId) => {
@@ -114,8 +115,9 @@ const getSalesReport = async (req, res) => {
         });
         // Calculate Summary Stats & Convert to Base Currency
         const now = new Date();
-        const convertedSalesReport = salesReport.map(inv => {
-            const rate = inv.exchangeRate || 1.0;
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const convertedSalesReport = await Promise.all(salesReport.map(async inv => {
+            const rate = await getConversionRate(inv.currency || 'USD', companyCurrency);
             return {
                 ...inv,
                 subtotal: inv.subtotal * rate,
@@ -130,7 +132,7 @@ const getSalesReport = async (req, res) => {
                     amount: item.amount * rate
                 }))
             };
-        });
+        }));
 
         const summary = convertedSalesReport.reduce((acc, inv) => {
             const total = inv.totalAmount || 0;
@@ -182,17 +184,19 @@ const getSalesByItemReport = async (req, res) => {
             },
             include: {
                 product: { include: { category: true } },
-                invoice: { select: { date: true, invoiceNumber: true, exchangeRate: true } }
+                invoice: { select: { date: true, invoiceNumber: true, exchangeRate: true, currency: true } }
             }
         });
 
-        const grouped = invoiceItems.reduce((acc, item) => {
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const grouped = {};
+        for (const item of invoiceItems) {
             const productId = item.productId || 'service-' + (item.serviceId || 'unknown');
             const productName = item.product?.name || item.description || 'Unknown';
-            const rate = item.invoice?.exchangeRate || 1.0;
+            const rate = await getConversionRate(item.invoice?.currency || 'USD', companyCurrency);
 
-            if (!acc[productId]) {
-                acc[productId] = {
+            if (!grouped[productId]) {
+                grouped[productId] = {
                     productId,
                     productName,
                     sku: item.product?.sku || '-',
@@ -203,11 +207,10 @@ const getSalesByItemReport = async (req, res) => {
                     invoiceIds: new Set()
                 };
             }
-            acc[productId].invoiceIds.add(item.invoiceId);
-            acc[productId].totalQty += item.quantity;
-            acc[productId].totalAmount += item.amount * rate;
-            return acc;
-        }, {});
+            grouped[productId].invoiceIds.add(item.invoiceId);
+            grouped[productId].totalQty += item.quantity;
+            grouped[productId].totalAmount += item.amount * rate;
+        }
 
         const result = Object.values(grouped).map(({ invoiceIds, ...item }) => ({
             ...item,
@@ -248,13 +251,15 @@ const getSalesByCustomerReport = async (req, res) => {
 
         const allInvoices = [...invoices, ...posInvoices];
 
-        const grouped = allInvoices.reduce((acc, inv) => {
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const grouped = {};
+        for (const inv of allInvoices) {
             const customerId = inv.customerId || 'walk-in';
             const customerName = inv.customer?.name || 'Walk-in Customer';
-            const rate = inv.exchangeRate || 1.0;
+            const rate = await getConversionRate(inv.currency || 'USD', companyCurrency);
 
-            if (!acc[customerId]) {
-                acc[customerId] = {
+            if (!grouped[customerId]) {
+                grouped[customerId] = {
                     customerId,
                     customerName,
                     totalInvoices: 0,
@@ -263,12 +268,11 @@ const getSalesByCustomerReport = async (req, res) => {
                     totalPending: 0
                 };
             }
-            acc[customerId].totalInvoices += 1;
-            acc[customerId].totalSales += inv.totalAmount * rate;
-            acc[customerId].totalPaid += (inv.paidAmount || 0) * rate;
-            acc[customerId].totalPending += (inv.balanceAmount || 0) * rate;
-            return acc;
-        }, {});
+            grouped[customerId].totalInvoices += 1;
+            grouped[customerId].totalSales += inv.totalAmount * rate;
+            grouped[customerId].totalPaid += (inv.paidAmount || 0) * rate;
+            grouped[customerId].totalPending += (inv.balanceAmount || 0) * rate;
+        }
 
         res.status(200).json({ success: true, data: Object.values(grouped) });
     } catch (error) {
@@ -296,20 +300,19 @@ const getSalesBySalesmanReport = async (req, res) => {
         });
 
         const allInvoices = [...invoices, ...posInvoices];
-        const grouped = allInvoices.reduce((acc, inv) => {
-            // Note: salesman tracking requires a 'createdBy' field on the invoice model.
-            // Not currently in schema — grouped under 'Administrator' until field is added.
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const grouped = {};
+        for (const inv of allInvoices) {
             const salesman = 'Administrator';
-            const rate = inv.exchangeRate || 1.0;
-            if (!acc[salesman]) {
-                acc[salesman] = { salesman, totalInvoices: 0, totalSales: 0, totalPaid: 0, totalPending: 0 };
+            const rate = await getConversionRate(inv.currency || 'USD', companyCurrency);
+            if (!grouped[salesman]) {
+                grouped[salesman] = { salesman, totalInvoices: 0, totalSales: 0, totalPaid: 0, totalPending: 0 };
             }
-            acc[salesman].totalInvoices += 1;
-            acc[salesman].totalSales += inv.totalAmount * rate;
-            acc[salesman].totalPaid += (inv.paidAmount || 0) * rate;
-            acc[salesman].totalPending += (inv.balanceAmount || 0) * rate;
-            return acc;
-        }, {});
+            grouped[salesman].totalInvoices += 1;
+            grouped[salesman].totalSales += inv.totalAmount * rate;
+            grouped[salesman].totalPaid += (inv.paidAmount || 0) * rate;
+            grouped[salesman].totalPending += (inv.balanceAmount || 0) * rate;
+        }
 
         res.status(200).json({ success: true, data: Object.values(grouped) });
     } catch (error) {
@@ -365,8 +368,9 @@ const getPurchaseReport = async (req, res) => {
         });
 
         // Convert to Base Currency
-        const convertedPurchaseReport = purchaseReport.map(bill => {
-            const rate = bill.exchangeRate || 1.0;
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const convertedPurchaseReport = await Promise.all(purchaseReport.map(async bill => {
+            const rate = await getConversionRate(bill.currency || 'USD', companyCurrency);
             return {
                 ...bill,
                 subtotal: (bill.subtotal || 0) * rate,
@@ -381,7 +385,7 @@ const getPurchaseReport = async (req, res) => {
                     amount: (item.amount || 0) * rate
                 }))
             };
-        });
+        }));
 
         // Calculate Summary Stats
         const now = new Date();
@@ -434,17 +438,19 @@ const getPurchaseByItemReport = async (req, res) => {
             },
             include: {
                 product: { include: { category: true } },
-                purchasebill: { select: { date: true, billNumber: true, exchangeRate: true } }
+                purchasebill: { select: { date: true, billNumber: true, exchangeRate: true, currency: true } }
             }
         });
 
-        const grouped = billItems.reduce((acc, item) => {
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const grouped = {};
+        for (const item of billItems) {
             const productId = item.productId || 'unknown';
             const productName = item.product?.name || item.description || 'Unknown';
-            const rate = item.purchasebill?.exchangeRate || 1.0;
+            const rate = await getConversionRate(item.purchasebill?.currency || 'USD', companyCurrency);
 
-            if (!acc[productId]) {
-                acc[productId] = {
+            if (!grouped[productId]) {
+                grouped[productId] = {
                     productId,
                     productName,
                     sku: item.product?.sku || '-',
@@ -455,11 +461,10 @@ const getPurchaseByItemReport = async (req, res) => {
                     billIds: new Set()
                 };
             }
-            acc[productId].billIds.add(item.purchaseBillId);
-            acc[productId].totalQty += item.quantity;
-            acc[productId].totalAmount += item.amount * rate;
-            return acc;
-        }, {});
+            grouped[productId].billIds.add(item.purchaseBillId);
+            grouped[productId].totalQty += item.quantity;
+            grouped[productId].totalAmount += item.amount * rate;
+        }
 
         const result = Object.values(grouped).map(({ billIds, ...item }) => ({
             ...item,
@@ -493,13 +498,15 @@ const getPurchaseByVendorReport = async (req, res) => {
             include: { vendor: true }
         });
 
-        const grouped = bills.reduce((acc, bill) => {
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const grouped = {};
+        for (const bill of bills) {
             const vendorId = bill.vendorId || 'unknown';
             const vendorName = bill.vendor?.name || 'Unknown Vendor';
-            const rate = bill.exchangeRate || 1.0;
+            const rate = await getConversionRate(bill.currency || 'USD', companyCurrency);
 
-            if (!acc[vendorId]) {
-                acc[vendorId] = {
+            if (!grouped[vendorId]) {
+                grouped[vendorId] = {
                     vendorId,
                     vendorName,
                     totalBills: 0,
@@ -508,12 +515,11 @@ const getPurchaseByVendorReport = async (req, res) => {
                     totalPending: 0
                 };
             }
-            acc[vendorId].totalBills += 1;
-            acc[vendorId].totalPurchases += bill.totalAmount * rate;
-            acc[vendorId].totalPaid += (bill.totalAmount - bill.balanceAmount) * rate;
-            acc[vendorId].totalPending += bill.balanceAmount * rate;
-            return acc;
-        }, {});
+            grouped[vendorId].totalBills += 1;
+            grouped[vendorId].totalPurchases += bill.totalAmount * rate;
+            grouped[vendorId].totalPaid += (bill.totalAmount - bill.balanceAmount) * rate;
+            grouped[vendorId].totalPending += bill.balanceAmount * rate;
+        }
 
         res.status(200).json({ success: true, data: Object.values(grouped) });
     } catch (error) {
@@ -549,8 +555,29 @@ const getPosReport = async (req, res) => {
             orderBy: { createdAt: 'desc' }
         });
 
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const histCurr = await getCompanyHistoricalCurrency(companyId);
+
+        // Convert amounts to settings base currency
+        const convertedReport = [];
+        for (const inv of posReport) {
+            const rate = await getConversionRate(inv.currency || histCurr, companyCurrency);
+            convertedReport.push({
+                ...inv,
+                totalAmount: (inv.totalAmount || 0) * rate,
+                paidAmount: (inv.paidAmount || 0) * rate,
+                balanceAmount: (inv.balanceAmount || 0) * rate,
+                taxAmount: (inv.taxAmount || 0) * rate,
+                posinvoiceitem: (inv.posinvoiceitem || []).map(item => ({
+                    ...item,
+                    rate: (item.rate || 0) * rate,
+                    amount: (item.amount || 0) * rate
+                }))
+            });
+        }
+
         // Calculate Stats
-        const summary = posReport.reduce((acc, inv) => {
+        const summary = convertedReport.reduce((acc, inv) => {
             const total = inv.totalAmount || 0;
             acc.totalSales += total;
 
@@ -564,7 +591,7 @@ const getPosReport = async (req, res) => {
             return acc;
         }, { totalSales: 0, totalCash: 0, totalCard: 0, totalUPI: 0, totalOther: 0 });
 
-        res.status(200).json({ success: true, data: posReport, summary });
+        res.status(200).json({ success: true, data: convertedReport, summary });
     } catch (error) {
         console.error('Error fetching POS report:', error);
         res.status(500).json({ success: false, message: 'Internal Server Error' });
@@ -611,16 +638,12 @@ const getTaxReport = async (req, res) => {
             include: { customer: { select: { billingState: true } } }
         });
 
-        // Initialize Arrays (12 months)
-        const incomeStats = {
-            CGST: Array(12).fill(0),
-            SGST: Array(12).fill(0),
-            IGST: Array(12).fill(0)
-        };
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const histCurr = await getCompanyHistoricalCurrency(companyId);
 
-        const processTax = (amount, date, entityState, targetStats) => {
+        const processTax = (amount, date, entityState, targetStats, rate = 1.0) => {
             const month = new Date(date).getMonth(); // 0-11
-            const tax = parseFloat(amount || 0);
+            const tax = parseFloat(amount || 0) * rate;
 
             if (tax > 0) {
                 // Determine Tax Type
@@ -639,8 +662,15 @@ const getTaxReport = async (req, res) => {
             }
         };
 
-        invoices.forEach(inv => processTax(inv.taxAmount, inv.date, inv.customer?.billingState, incomeStats));
-        posInvoices.forEach(pos => processTax(pos.taxAmount, pos.createdAt, pos.customer?.billingState || companyState, incomeStats)); // Default POS to local if no cust
+        for (const inv of invoices) {
+            const rate = await getConversionRate(inv.currency || 'USD', companyCurrency);
+            processTax(inv.taxAmount, inv.date, inv.customer?.billingState, incomeStats, rate);
+        }
+
+        for (const pos of posInvoices) {
+            const rate = await getConversionRate(pos.currency || histCurr, companyCurrency);
+            processTax(pos.taxAmount, pos.createdAt, pos.customer?.billingState || companyState, incomeStats, rate);
+        }
 
         // --- 2. EXPENSE TAX (Purchases) ---
         const bills = await prisma.purchasebill.findMany({
@@ -660,7 +690,10 @@ const getTaxReport = async (req, res) => {
             IGST: Array(12).fill(0)
         };
 
-        bills.forEach(bill => processTax(bill.taxAmount, bill.date, bill.vendor?.billingState, expenseStats));
+        for (const bill of bills) {
+            const rate = await getConversionRate(bill.currency || 'USD', companyCurrency);
+            processTax(bill.taxAmount, bill.date, bill.vendor?.billingState, expenseStats, rate);
+        }
 
         res.status(200).json({
             success: true,
@@ -682,28 +715,37 @@ const getInventorySummary = async (req, res) => {
         const companyId = req.user?.companyId || req.query.companyId;
         if (!companyId) return res.status(400).json({ success: false, message: 'Company ID is required' });
 
+        const { startDate, endDate, warehouseId } = req.query;
+
         // Get All Stocks
+        const stockWhere = { product: { companyId: parseInt(companyId) } };
+        if (warehouseId && warehouseId !== 'ALL') {
+            stockWhere.warehouseId = parseInt(warehouseId);
+        }
+
         const stocks = await prisma.stock.findMany({
-            where: { product: { companyId: parseInt(companyId) } },
+            where: stockWhere,
             include: {
                 product: { include: { category: true } },
                 warehouse: true
             }
         });
 
-        // Calculate movements based on transactions? 
-        // Or simplified: Stock table holds current (closing).
-        // Opening = Closing - Inward + Outward (Logic depends on date range, but "summary" usually means current status).
-        // If user wants historical range, we need InventoryTransaction table. 
-        // Assuming "Current Status" report for now as per UI "Track stock movements and CURRENT status".
-        // But the UI shows "Opening, Inward, Outward". This implies a period (e.g. today, this month).
-        // Let's assume period is "All Time" or "Current Accounting Period".
-        // Better: Use InventoryTransaction to sum Inwards/Outwards.
-
-        // Let's fetch transaction aggregates per product/warehouse
+        // Get All Transactions
+        const txWhere = { companyId: parseInt(companyId) };
+        if (warehouseId && warehouseId !== 'ALL') {
+            txWhere.OR = [
+                { fromWarehouseId: parseInt(warehouseId) },
+                { toWarehouseId: parseInt(warehouseId) }
+            ];
+        }
         const transactions = await prisma.inventorytransaction.findMany({
-            where: { companyId: parseInt(companyId) }
+            where: txWhere
         });
+
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const histCurr = await getCompanyHistoricalCurrency(companyId);
+        const rate = await getConversionRate(histCurr, companyCurrency);
 
         // Map data
         const reportMap = {};
@@ -716,9 +758,10 @@ const getInventorySummary = async (req, res) => {
                 productId: stk.productId,
                 productName: stk.product.name,
                 sku: stk.product.sku || 'N/A',
+                warehouseId: stk.warehouseId,
                 warehouse: stk.warehouse.name,
-                price: stk.product.salePrice || 0,
-                closing: stk.quantity, // Current quantity found in stock table is Closing for "today"
+                price: (stk.product.salePrice || 0) * rate,
+                closing: stk.quantity, // starts as current stock, will adjust if date filter is set
                 opening: 0,
                 inward: 0,
                 outward: 0,
@@ -726,38 +769,53 @@ const getInventorySummary = async (req, res) => {
             };
         });
 
-        // If specific date range provided, we'd need complex "As Of" calculation.
-        // For now, let's treat "Inward" as Purchases/Returns In, "Outward" as Sales/Returns Out.
-        // And "Opening" as what?
-        // Let's calculate Inward/Outward from transactions. 
-        // Issue: Closing is known. Opening = Closing - In + Out.
+        // Parse date filters
+        const start = startDate ? new Date(startDate) : null;
+        const end = endDate ? new Date(endDate) : null;
 
+        // If dates are provided, we need to adjust the closing/opening stock based on transaction dates.
         transactions.forEach(txn => {
-            // Logic:
-            // Type: PURCHASE, RETURN (In from Cust), GRN, ADJUSTMENT(Add), OPENING_STOCK, TRANSFER(In) -> Inward
-            // Type: SALE, RETURN (Out to Vendor), ADJUSTMENT(Remove), TRANSFER(Out) -> Outward
-
-            // We need to match with the stock keys.
-            // Trans has fromWarehouseId and toWarehouseId.
+            const txnDate = new Date(txn.date);
 
             // Handle OUT from warehouse
             if (txn.fromWarehouseId) {
-                const key = `${txn.productId}-${txn.fromWarehouseId}`;
-                if (reportMap[key]) {
-                    reportMap[key].outward += txn.quantity;
+                // If filtering by a specific warehouse, skip if it doesn't match
+                if (warehouseId && warehouseId !== 'ALL' && txn.fromWarehouseId !== parseInt(warehouseId)) {
+                    // skip
+                } else {
+                    const key = `${txn.productId}-${txn.fromWarehouseId}`;
+                    if (reportMap[key]) {
+                        if (end && txnDate > end) {
+                            // transaction happened after endDate, so the stock back then was higher
+                            reportMap[key].closing += txn.quantity;
+                        } else if (start && txnDate >= start && (!end || txnDate <= end)) {
+                            reportMap[key].outward += txn.quantity;
+                        } else if (!start && (!end || txnDate <= end)) {
+                            reportMap[key].outward += txn.quantity;
+                        }
+                    }
                 }
             }
 
             // Handle IN to warehouse
             if (txn.toWarehouseId) {
-                const key = `${txn.productId}-${txn.toWarehouseId}`;
-                if (reportMap[key]) {
-                    reportMap[key].inward += txn.quantity;
+                // If filtering by a specific warehouse, skip if it doesn't match
+                if (warehouseId && warehouseId !== 'ALL' && txn.toWarehouseId !== parseInt(warehouseId)) {
+                    // skip
+                } else {
+                    const key = `${txn.productId}-${txn.toWarehouseId}`;
+                    if (reportMap[key]) {
+                        if (end && txnDate > end) {
+                            // transaction happened after endDate, so the stock back then was lower
+                            reportMap[key].closing -= txn.quantity;
+                        } else if (start && txnDate >= start && (!end || txnDate <= end)) {
+                            reportMap[key].inward += txn.quantity;
+                        } else if (!start && (!end || txnDate <= end)) {
+                            reportMap[key].inward += txn.quantity;
+                        }
+                    }
                 }
             }
-            // Note: Single trans can be transfer (out from A, in to B).
-            // Purchase is IN to 'toWarehouse'.
-            // Sale is OUT from 'fromWarehouse'.
         });
 
         // Now Calculate Opening: Opening = Closing - Inward + Outward
@@ -835,15 +893,19 @@ const getBalanceSheet = async (req, res) => {
         let totalIncome = 0;
         let totalExpense = 0;
 
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const histCurr = await getCompanyHistoricalCurrency(companyId);
+        const rate = await getConversionRate(histCurr, companyCurrency);
+
         // --- Dynamic Inventory Value (real-time: quantity × cost from stock table) ---
-        const currentInventoryValue = await calculateInventoryValue(companyId);
+        const currentInventoryValue = (await calculateInventoryValue(companyId)) * rate;
 
         ledgers.forEach(ledger => {
             if (ledger.name.toLowerCase().includes('opening balance equity')) {
                 return;
             }
             const groupType = ledger.accountgroup?.type;
-            const opening = ledger.openingBalance || 0;
+            const opening = (ledger.openingBalance || 0) * rate;
 
             // Calculate Balance
             // ASSETS, EXPENSES: Debit normal (Opening + Debits - Credits)
@@ -853,9 +915,9 @@ const getBalanceSheet = async (req, res) => {
                 // Always override Inventory Asset with live stock value
                 balance = currentInventoryValue;
             } else if (['ASSETS', 'EXPENSES'].includes(groupType)) {
-                balance = opening + getDebit(ledger.id) - getCredit(ledger.id);
+                balance = (getDebit(ledger.id) - getCredit(ledger.id)) * rate;
             } else {
-                balance = opening + getCredit(ledger.id) - getDebit(ledger.id);
+                balance = (getCredit(ledger.id) - getDebit(ledger.id)) * rate;
             }
 
             // Only process non-zero balances (Equity accounts should always show in Balance Sheet)
@@ -968,28 +1030,29 @@ const getCashFlowStatement = async (req, res) => {
 
         const year = parseInt(req.query.year) || new Date().getFullYear();
 
+        const companyCurrency = await getCompanyCurrency(companyId);
+
         // Helpers
         const getMonthlySum = async (model, dateField = 'date', sumField = 'amount') => {
-            const data = await model.groupBy({
-                by: [dateField],
+            const items = await model.findMany({
                 where: {
                     companyId: parseInt(companyId),
                     [dateField]: {
                         gte: new Date(`${year}-01-01`),
                         lte: toEndOfDay(`${year}-12-31`)
                     }
-                },
-                _sum: { [sumField]: true }
+                }
             });
 
             // Aggregate by month (0-11)
             const monthly = Array(12).fill(0);
-            data.forEach(item => {
+            for (const item of items) {
                 const d = new Date(item[dateField]);
                 const month = d.getMonth(); // 0-11
-                const val = item._sum[sumField] || 0;
+                const rate = await getConversionRate(item.currency || 'USD', companyCurrency);
+                const val = (item[sumField] || 0) * rate;
                 monthly[month] += val;
-            });
+            }
             return monthly;
         };
 
@@ -1069,6 +1132,10 @@ const getProfitLoss = async (req, res) => {
                 }
             });
 
+            const companyCurrency = await getCompanyCurrency(companyId);
+            const histCurr = await getCompanyHistoricalCurrency(companyId);
+            const rate = await getConversionRate(histCurr, companyCurrency);
+
             // Process Data
             let totalIncome = 0;
             let totalExpense = 0;
@@ -1085,7 +1152,7 @@ const getProfitLoss = async (req, res) => {
 
             const ledgerValues = {}; // To store net value per ledger
             ledgers.forEach(l => {
-                const openBal = parseFloat(l.openingBalance || 0);
+                const openBal = parseFloat(l.openingBalance || 0) * rate;
                 ledgerValues[l.id] = openBal;
 
                 // Income and Expenses opening balances contribute to the net profit
@@ -1095,7 +1162,7 @@ const getProfitLoss = async (req, res) => {
 
             transactions.forEach(txn => {
                 const month = new Date(txn.date).getMonth(); // 0-11
-                const amount = txn.amount || 0;
+                const amount = (txn.amount || 0) * rate;
 
                 const debitLedger = ledgers.find(l => l.id === txn.debitLedgerId);
                 const creditLedger = ledgers.find(l => l.id === txn.creditLedgerId);
@@ -1274,9 +1341,11 @@ const getVatReport = async (req, res) => {
         // Map to Unified Structure
         let reportData = [];
 
+        const companyCurrency = await getCompanyCurrency(companyId);
+
         // Map Invoices
-        invoices.forEach(inv => {
-            const exRate = inv.exchangeRate || 1.0;
+        for (const inv of invoices) {
+            const exRate = await getConversionRate(inv.currency || 'USD', companyCurrency);
             const taxable = (parseFloat(inv.subtotal) || 0) * exRate;
             const tax = (parseFloat(inv.taxAmount) || 0) * exRate;
             const rate = taxable > 0 ? ((tax / taxable) * 100).toFixed(1) : 0;
@@ -1290,12 +1359,14 @@ const getVatReport = async (req, res) => {
                 vatRate: rate,
                 date: inv.date
             });
-        });
+        }
 
         // Map POS
-        posInvoices.forEach(pos => {
-            const taxable = parseFloat(pos.subtotal) || 0;
-            const tax = parseFloat(pos.taxAmount) || 0;
+        const histCurr = await getCompanyHistoricalCurrency(companyId);
+        for (const pos of posInvoices) {
+            const exRate = await getConversionRate(pos.currency || histCurr, companyCurrency);
+            const taxable = (parseFloat(pos.subtotal) || 0) * exRate;
+            const tax = (parseFloat(pos.taxAmount) || 0) * exRate;
             const rate = taxable > 0 ? ((tax / taxable) * 100).toFixed(1) : 0;
             const custName = pos.customer ? pos.customer.name : 'Walk-in Customer';
 
@@ -1308,11 +1379,11 @@ const getVatReport = async (req, res) => {
                 vatRate: rate,
                 date: pos.createdAt
             });
-        });
+        }
 
         // Map Bills
-        bills.forEach(bill => {
-            const exRate = bill.exchangeRate || 1.0;
+        for (const bill of bills) {
+            const exRate = await getConversionRate(bill.currency || 'USD', companyCurrency);
             const taxable = (parseFloat(bill.subtotal) || 0) * exRate;
             const tax = (parseFloat(bill.taxAmount) || 0) * exRate;
             const rate = taxable > 0 ? ((tax / taxable) * 100).toFixed(1) : 0;
@@ -1326,7 +1397,7 @@ const getVatReport = async (req, res) => {
                 vatRate: rate,
                 date: bill.date
             });
-        });
+        }
 
         // Sort by Date Descending
         reportData.sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -1380,18 +1451,24 @@ const getDayBook = async (req, res) => {
                     ...(lId ? { customer: { ledgerId: lId } } : {})
                 },
                 include: { customer: true }
-            }).then(items => items.map(inv => ({
-                id: `INV-${inv.id}`,
-                date: inv.date,
-                voucherType: 'Sales',
-                voucherNo: inv.invoiceNumber,
-                ledger: inv.customer?.name || 'Unknown',
-                ledgerId: inv.customer?.ledgerId || null,
-                description: inv.notes || 'Sales Invoice',
-                debit: inv.totalAmount * (inv.exchangeRate || 1.0),
-                credit: 0,
-                source: { type: 'SALES', id: inv.id, link: `/company/sales/invoice/view/${inv.id}` }
-            }))));
+            }).then(async items => {
+                const companyCurrency = await getCompanyCurrency(companyIdInt);
+                return Promise.all(items.map(async inv => {
+                    const rate = await getConversionRate(inv.currency || 'USD', companyCurrency);
+                    return {
+                        id: `INV-${inv.id}`,
+                        date: inv.date,
+                        voucherType: 'Sales',
+                        voucherNo: inv.invoiceNumber,
+                        ledger: inv.customer?.name || 'Unknown',
+                        ledgerId: inv.customer?.ledgerId || null,
+                        description: inv.notes || 'Sales Invoice',
+                        debit: inv.totalAmount * rate,
+                        credit: 0,
+                        source: { type: 'SALES', id: inv.id, link: `/company/sales/invoice/view/${inv.id}` }
+                    };
+                }));
+            }));
         }
 
         // 2. POS Invoices
@@ -1403,21 +1480,26 @@ const getDayBook = async (req, res) => {
                     ...(lId ? { OR: [{ customer: { ledgerId: lId } }, { transaction: { some: { OR: [{ debitLedgerId: lId }, { creditLedgerId: lId }] } } }] } : {})
                 },
                 include: { customer: true, transaction: { select: { debitLedgerId: true } } }
-            }).then(items => items.map(pos => {
-                const ledgerId = pos.customer?.ledgerId || pos.transaction[0]?.debitLedgerId || null;
-                return {
-                    id: `POS-${pos.id}`,
-                    date: pos.createdAt,
-                    voucherType: 'POS Invoice',
-                    voucherNo: pos.invoiceNumber,
-                    ledger: pos.customer?.name || 'Walk-in (Cash)',
-                    ledgerId,
-                    description: 'POS Sale',
-                    debit: pos.totalAmount,
-                    credit: 0,
-                    source: { type: 'POS_INVOICE', id: pos.id, link: `/company/pos/view/${pos.id}` }
-                };
-            })));
+            }).then(async items => {
+                const companyCurrency = await getCompanyCurrency(companyIdInt);
+                const histCurr = await getCompanyHistoricalCurrency(companyIdInt);
+                return Promise.all(items.map(async pos => {
+                    const ledgerId = pos.customer?.ledgerId || pos.transaction[0]?.debitLedgerId || null;
+                    const rate = await getConversionRate(pos.currency || histCurr, companyCurrency);
+                    return {
+                        id: `POS-${pos.id}`,
+                        date: pos.createdAt,
+                        voucherType: 'POS Invoice',
+                        voucherNo: pos.invoiceNumber,
+                        ledger: pos.customer?.name || 'Walk-in (Cash)',
+                        ledgerId,
+                        description: 'POS Sale',
+                        debit: pos.totalAmount * rate,
+                        credit: 0,
+                        source: { type: 'POS_INVOICE', id: pos.id, link: `/company/pos/view/${pos.id}` }
+                    };
+                }));
+            }));
         }
 
         // 3. Purchase Bills
@@ -1429,18 +1511,24 @@ const getDayBook = async (req, res) => {
                     ...(lId ? { vendor: { ledgerId: lId } } : {})
                 },
                 include: { vendor: true }
-            }).then(items => items.map(bill => ({
-                id: `BILL-${bill.id}`,
-                date: bill.date,
-                voucherType: 'Purchase',
-                voucherNo: bill.billNumber,
-                ledger: bill.vendor?.name || 'Unknown',
-                ledgerId: bill.vendor?.ledgerId || null,
-                description: bill.notes || 'Purchase Bill',
-                debit: 0,
-                credit: bill.totalAmount * (bill.exchangeRate || 1.0),
-                source: { type: 'PURCHASE', id: bill.id, link: `/company/purchase/bill/view/${bill.id}` }
-            }))));
+            }).then(async items => {
+                const companyCurrency = await getCompanyCurrency(companyIdInt);
+                return Promise.all(items.map(async bill => {
+                    const rate = await getConversionRate(bill.currency || 'USD', companyCurrency);
+                    return {
+                        id: `BILL-${bill.id}`,
+                        date: bill.date,
+                        voucherType: 'Purchase',
+                        voucherNo: bill.billNumber,
+                        ledger: bill.vendor?.name || 'Unknown',
+                        ledgerId: bill.vendor?.ledgerId || null,
+                        description: bill.notes || 'Purchase Bill',
+                        debit: 0,
+                        credit: bill.totalAmount * rate,
+                        source: { type: 'PURCHASE', id: bill.id, link: `/company/purchase/bill/view/${bill.id}` }
+                    };
+                }));
+            }));
         }
 
         // 4. Receipts
@@ -1579,12 +1667,16 @@ const getJournalReport = async (req, res) => {
             orderBy: { date: 'desc' }
         });
 
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const histCurr = await getCompanyHistoricalCurrency(companyId);
+        const rate = await getConversionRate(histCurr, companyCurrency);
+
         const reportData = journals.map(entry => {
             let ledgers = [];
 
             // Each transaction represents a Debit-Credit pair
             entry.transaction.forEach(txn => {
-                const amount = parseFloat(txn.amount);
+                const amount = parseFloat(txn.amount) * rate;
 
                 // Debit Side
                 if (txn.debitLedgerId) {
@@ -1633,6 +1725,10 @@ const getTrialBalance = async (req, res) => {
         const endDate = new Date(dateStr);
         endDate.setHours(23, 59, 59, 999);
 
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const histCurr = await getCompanyHistoricalCurrency(companyId);
+        const rate = await getConversionRate(histCurr, companyCurrency);
+
         // Fetch all ledgers with their group details
         const ledgers = await prisma.ledger.findMany({
             where: { companyId: parseInt(companyId) },
@@ -1657,7 +1753,7 @@ const getTrialBalance = async (req, res) => {
         const creditMap = new Map(creditSums.map(c => [c.creditLedgerId, c._sum.amount || 0]));
 
         // Calculate dynamic inventory value once
-        const currentInventoryValue = await calculateInventoryValue(companyId);
+        const currentInventoryValue = (await calculateInventoryValue(companyId)) * rate;
 
         const trialBalance = [];
 
@@ -1670,17 +1766,17 @@ const getTrialBalance = async (req, res) => {
             let totalCredit = 0;
 
             if (!isOBE) {
-                const txnDebit = debitMap.get(ledger.id) || 0;
-                const txnCredit = creditMap.get(ledger.id) || 0;
-                const openingBalance = parseFloat(ledger.openingBalance || 0);
+                const txnDebit = (debitMap.get(ledger.id) || 0) * rate;
+                const txnCredit = (creditMap.get(ledger.id) || 0) * rate;
+                const openingBalance = parseFloat(ledger.openingBalance || 0) * rate;
 
                 // Assets and Expenses: Debit-normal
                 if (groupType === 'ASSETS' || groupType === 'EXPENSES') {
-                    totalDebit = openingBalance + txnDebit;
+                    totalDebit = txnDebit;
                     totalCredit = txnCredit;
                 } else {
                     // Liabilities, Income, Equity: Credit-normal
-                    totalCredit = openingBalance + txnCredit;
+                    totalCredit = txnCredit;
                     totalDebit = txnDebit;
                 }
             }

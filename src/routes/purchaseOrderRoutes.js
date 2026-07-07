@@ -10,5 +10,6 @@ router.get('/', purchaseOrderController.getOrders);
 router.get('/:id', purchaseOrderController.getOrderById);
 router.put('/:id', purchaseOrderController.updateOrder);
 router.delete('/:id', purchaseOrderController.deleteOrder);
+router.post('/:id/convert', purchaseOrderController.convertToGRN);
 
 module.exports = router;

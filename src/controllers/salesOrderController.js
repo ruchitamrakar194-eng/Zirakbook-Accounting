@@ -2,14 +2,83 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const numberingService = require('../services/numberingService');
 
+async function updateSalesOrderStatus(tx, salesOrderId) {
+    if (!salesOrderId) return;
+    const soId = parseInt(salesOrderId);
+    if (isNaN(soId)) return;
+
+    const so = await tx.salesorder.findUnique({
+        where: { id: soId },
+        include: { salesorderitem: true }
+    });
+
+    if (!so) return;
+    if (so.manualStatus === true) return;
+
+    const challans = await tx.deliverychallan.findMany({
+        where: { salesOrderId: soId },
+        include: { deliverychallanitem: true }
+    });
+
+    const deliveredMap = {};
+    for (const dc of challans) {
+        for (const item of dc.deliverychallanitem) {
+            const pId = item.productId;
+            if (pId) {
+                deliveredMap[pId] = (deliveredMap[pId] || 0) + item.quantity;
+            }
+        }
+    }
+
+    let allCompleted = true;
+    let someDelivered = false;
+
+    for (const soItem of so.salesorderitem) {
+        const ordered = soItem.quantity || 0;
+        const delivered = deliveredMap[soItem.productId] || 0;
+
+        if (delivered < ordered) {
+            allCompleted = false;
+        }
+        if (delivered > 0) {
+            someDelivered = true;
+        }
+    }
+
+    let finalStatus = 'PENDING';
+    if (allCompleted && so.salesorderitem.length > 0) {
+        finalStatus = 'COMPLETED';
+    } else if (someDelivered) {
+        finalStatus = 'PARTIAL';
+    }
+
+    await tx.salesorder.update({
+        where: { id: soId },
+        data: { status: finalStatus }
+    });
+}
+
 // Create Sales Order
 const createOrder = async (req, res) => {
     try {
-        const { orderNumber, date, expectedDate, customerId, items, notes, quotationId, billingName, billingAddress, billingCity, billingState, billingZipCode, billingCountry, shippingName, shippingAddress, shippingCity, shippingState, shippingZipCode, shippingCountry, overallDiscount, overallDiscountType, customFields, manualStatus, status } = req.body;
+        const { orderNumber, manualReference, date, expectedDate, customerId, items, notes, terms, quotationId, billingName, billingAddress, billingCity, billingState, billingZipCode, billingCountry, shippingName, shippingAddress, shippingCity, shippingState, shippingZipCode, shippingCountry, overallDiscount, overallDiscountType, customFields, manualStatus, status, allowDuplicateManualNo } = req.body;
         const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
 
         if (!companyId) {
             return res.status(400).json({ success: false, message: 'Company ID is required' });
+        }
+
+        if (manualReference && !(allowDuplicateManualNo === true || allowDuplicateManualNo === 'true')) {
+            const existingManual = await prisma.salesorder.findFirst({
+                where: { companyId: parseInt(companyId), manualReference }
+            });
+            if (existingManual) {
+                return res.status(400).json({
+                    success: false,
+                    isDuplicateWarning: true,
+                    message: `Manual reference number '${manualReference}' already exists. Do you want to use this duplicate number?`
+                });
+            }
         }
 
         if (!orderNumber || !customerId || !items || items.length === 0) {
@@ -95,6 +164,7 @@ const createOrder = async (req, res) => {
             const order = await tx.salesorder.create({
                 data: {
                     orderNumber,
+                    manualReference,
                     date: new Date(date),
                     expectedDate: expectedDate ? new Date(expectedDate) : null,
                     customer: { connect: { id: parseInt(customerId) } },
@@ -107,6 +177,7 @@ const createOrder = async (req, res) => {
                     overallDiscountType: overallDiscountType || 'percentage',
                     totalAmount: finalTotal,
                     notes,
+                    terms,
                     manualStatus: manualStatus === true || manualStatus === 'true',
                     status: (manualStatus === true || manualStatus === 'true') && status ? status : 'PENDING',
                     customFields: customFields ? (typeof customFields === 'string' ? customFields : JSON.stringify(customFields)) : null,
@@ -264,11 +335,28 @@ const getOrderById = async (req, res) => {
 const updateOrder = async (req, res) => {
     try {
         const { id } = req.params;
-        const { orderNumber, date, expectedDate, customerId, items, notes, status, billingName, billingAddress, billingCity, billingState, billingZipCode, billingCountry, shippingName, shippingAddress, shippingCity, shippingState, shippingZipCode, shippingCountry, overallDiscount, overallDiscountType, customFields, manualStatus, onlyUpdateStatus } = req.body;
+        const { orderNumber, manualReference, date, expectedDate, customerId, items, notes, terms, status, billingName, billingAddress, billingCity, billingState, billingZipCode, billingCountry, shippingName, shippingAddress, shippingCity, shippingState, shippingZipCode, shippingCountry, overallDiscount, overallDiscountType, customFields, manualStatus, onlyUpdateStatus, allowDuplicateManualNo } = req.body;
         const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
 
         if (!companyId) {
             return res.status(400).json({ success: false, message: 'Company ID is required' });
+        }
+
+        if (manualReference && !(allowDuplicateManualNo === true || allowDuplicateManualNo === 'true')) {
+            const existingManual = await prisma.salesorder.findFirst({
+                where: {
+                    companyId: parseInt(companyId),
+                    manualReference,
+                    id: { not: parseInt(id) }
+                }
+            });
+            if (existingManual) {
+                return res.status(400).json({
+                    success: false,
+                    isDuplicateWarning: true,
+                    message: `Manual reference number '${manualReference}' already exists. Do you want to use this duplicate number?`
+                });
+            }
         }
 
         if (onlyUpdateStatus === true || onlyUpdateStatus === 'true') {
@@ -354,7 +442,7 @@ const updateOrder = async (req, res) => {
             };
         });
 
-        await prisma.$transaction(async (tx) => {
+        const result = await prisma.$transaction(async (tx) => {
             await tx.salesorderitem.deleteMany({
                 where: { orderId: parseInt(id) }
             });
@@ -367,10 +455,11 @@ const updateOrder = async (req, res) => {
                 finalTotal = baseTotal - overallDiscount;
             }
 
-            return await tx.salesorder.update({
+            const updatedOrder = await tx.salesorder.update({
                 where: { id: parseInt(id), companyId: parseInt(companyId) },
                 data: {
                     orderNumber,
+                    manualReference,
                     date: new Date(date),
                     expectedDate: expectedDate ? new Date(expectedDate) : null,
                     customer: { connect: { id: parseInt(customerId) } },
@@ -382,6 +471,7 @@ const updateOrder = async (req, res) => {
                     overallDiscountType: overallDiscountType || 'percentage',
                     totalAmount: finalTotal,
                     notes,
+                    terms,
                     manualStatus: manualStatus === true || manualStatus === 'true',
                     status,
                     customFields: customFields !== undefined ? (typeof customFields === 'string' ? customFields : JSON.stringify(customFields)) : undefined,
@@ -411,9 +501,221 @@ const updateOrder = async (req, res) => {
                             uomId: i.uomId
                         }))
                     }
-                }
+                },
+                include: { salesorderitem: true }
             });
+
+            // Propagate changes to Delivery Challans if linked
+            const challans = await tx.deliverychallan.findMany({
+                where: { salesOrderId: updatedOrder.id }
+            });
+            const company = await tx.company.findUnique({ where: { id: parseInt(companyId) } });
+            const config = company.inventoryConfig || {};
+            const action = config.challanAction || 'ISSUE';
+
+            for (const dc of challans) {
+                // Revert stock of existing DC items
+                const existingDcItems = await tx.deliverychallanitem.findMany({
+                    where: { challanId: dc.id }
+                });
+                for (const item of existingDcItems) {
+                    if (item.productId && item.warehouseId) {
+                        if (action === 'ISSUE') {
+                            await tx.stock.upsert({
+                                where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
+                                create: {
+                                    warehouseId: item.warehouseId,
+                                    productId: item.productId,
+                                    quantity: item.quantity,
+                                    initialQty: 0,
+                                    minOrderQty: 0
+                                },
+                                update: {
+                                    quantity: { increment: item.quantity }
+                                }
+                            });
+                        } else if (action === 'RESERVE') {
+                            await tx.stock.upsert({
+                                where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
+                                create: {
+                                    warehouseId: item.warehouseId,
+                                    productId: item.productId,
+                                    reservedQuantity: -item.quantity,
+                                    quantity: 0,
+                                    initialQty: 0,
+                                    minOrderQty: 0
+                                },
+                                update: {
+                                    reservedQuantity: { decrement: item.quantity }
+                                }
+                            });
+                        }
+                    }
+                }
+
+                // Delete old inventory transactions for this DC
+                await tx.inventorytransaction.deleteMany({
+                    where: {
+                        companyId: parseInt(companyId),
+                        reason: `Challan Issue: ${dc.challanNumber}`
+                    }
+                });
+
+                // Delete existing items
+                await tx.deliverychallanitem.deleteMany({
+                    where: { challanId: dc.id }
+                });
+
+                // Re-create items matching physical items in the sales order
+                const physicalItems = orderItems.filter(i => i.productId);
+                await tx.deliverychallanitem.createMany({
+                    data: physicalItems.map(i => ({
+                        challanId: dc.id,
+                        productId: i.productId,
+                        warehouseId: i.warehouseId || 1,
+                        quantity: i.quantity,
+                        description: i.description || ''
+                    }))
+                });
+
+                // Apply new stock and log transaction
+                for (const item of physicalItems) {
+                    const wId = item.warehouseId || 1;
+                    if (item.productId && wId) {
+                        if (action === 'ISSUE') {
+                            await tx.stock.upsert({
+                                where: { warehouseId_productId: { warehouseId: wId, productId: item.productId } },
+                                create: {
+                                    warehouseId: wId,
+                                    productId: item.productId,
+                                    quantity: -item.quantity,
+                                    initialQty: 0,
+                                    minOrderQty: 0
+                                },
+                                update: {
+                                    quantity: { decrement: item.quantity }
+                                }
+                            });
+
+                            await tx.inventorytransaction.create({
+                                data: {
+                                    type: 'SALE',
+                                    productId: item.productId,
+                                    fromWarehouseId: wId,
+                                    quantity: item.quantity,
+                                    reason: `Challan Issue: ${dc.challanNumber}`,
+                                    companyId: parseInt(companyId),
+                                    userId: req.user?.userId || null
+                                }
+                            });
+                        } else if (action === 'RESERVE') {
+                            await tx.stock.upsert({
+                                where: { warehouseId_productId: { warehouseId: wId, productId: item.productId } },
+                                create: { warehouseId: wId, productId: item.productId, reservedQuantity: item.quantity },
+                                update: { reservedQuantity: { increment: item.quantity } }
+                            });
+                        }
+                    }
+                }
+
+                // Update Delivery Challan fields
+                await tx.deliverychallan.update({
+                    where: { id: dc.id },
+                    data: {
+                        customer: { connect: { id: parseInt(updatedOrder.customerId) } },
+                        shippingAddress: updatedOrder.shippingAddress,
+                        shippingCity: updatedOrder.shippingCity,
+                        shippingState: updatedOrder.shippingState,
+                        shippingZipCode: updatedOrder.shippingZipCode,
+                        customFields: updatedOrder.customFields
+                    }
+                });
+            }
+
+            // Recalculate status of updated sales order
+            await updateSalesOrderStatus(tx, updatedOrder.id);
+
+            return updatedOrder;
         }, { timeout: 30000 });
+
+        // Cascading Invoice Sync after transaction has completed
+        const challans = await prisma.deliverychallan.findMany({
+            where: { salesOrderId: result.id }
+        });
+        for (const dc of challans) {
+            const invoice = await prisma.invoice.findFirst({
+                where: { deliveryChallanId: dc.id, companyId: parseInt(companyId) }
+            });
+            if (invoice) {
+                const dcItems = await prisma.deliverychallanitem.findMany({
+                    where: { challanId: dc.id }
+                });
+                const invoiceItems = dcItems.map(item => {
+                    const soItem = result.salesorderitem.find(si => si.productId === item.productId);
+                    const rate = soItem ? soItem.rate : 0;
+                    const discount = soItem ? soItem.discount : 0;
+                    const taxRate = soItem ? soItem.taxRate : 0;
+                    const serviceId = soItem ? soItem.serviceId : null;
+                    const uomId = soItem ? soItem.uomId : null;
+
+                    return {
+                        productId: item.productId,
+                        serviceId,
+                        uomId,
+                        warehouseId: item.warehouseId,
+                        description: item.description || '',
+                        quantity: item.quantity,
+                        rate,
+                        discount,
+                        taxRate
+                    };
+                });
+
+                const fakeReq = {
+                    user: req.user,
+                    params: { id: String(invoice.id) },
+                    body: {
+                        invoiceNumber: invoice.invoiceNumber,
+                        date: invoice.date.toISOString().split('T')[0],
+                        dueDate: invoice.dueDate ? invoice.dueDate.toISOString().split('T')[0] : null,
+                        customerId: dc.customerId,
+                        salesOrderId: result.id,
+                        deliveryChallanId: dc.id,
+                        items: invoiceItems,
+                        notes: dc.notes || '',
+                        overallDiscount: result.overallDiscount,
+                        overallDiscountType: result.overallDiscountType,
+                        billingName: result.billingName || dc.customer?.billingName || dc.customer?.name,
+                        billingAddress: result.billingAddress || dc.customer?.billingAddress,
+                        billingCity: result.billingCity || dc.customer?.billingCity,
+                        billingState: result.billingState || dc.customer?.billingState,
+                        billingZipCode: result.billingZipCode || dc.customer?.billingZipCode,
+                        billingCountry: result.billingCountry,
+                        shippingName: result.shippingName || dc.customer?.shippingName || dc.customer?.name,
+                        shippingAddress: dc.shippingAddress || result.shippingAddress || dc.customer?.shippingAddress || dc.customer?.billingAddress,
+                        shippingCity: dc.shippingCity || result.shippingCity || dc.customer?.shippingCity || dc.customer?.billingCity,
+                        shippingState: dc.shippingState || result.shippingState || dc.customer?.shippingState || dc.customer?.billingState,
+                        shippingZipCode: dc.shippingZipCode || result.shippingZipCode || dc.customer?.shippingZipCode || dc.customer?.billingZipCode,
+                        shippingCountry: result.shippingCountry,
+                        currency: invoice.currency || 'USD',
+                        exchangeRate: invoice.exchangeRate || 1.0,
+                        manualStatus: invoice.manualStatus,
+                        status: invoice.status,
+                        companyId: parseInt(companyId)
+                    }
+                };
+
+                let responseStatus = 200;
+                let responseData = null;
+                const fakeRes = {
+                    status: function(code) { responseStatus = code; return this; },
+                    json: function(data) { responseData = data; return this; }
+                };
+
+                const salesInvoiceController = require('./salesInvoiceController');
+                await salesInvoiceController.updateInvoice(fakeReq, fakeRes);
+            }
+        }
 
         const updated = await prisma.salesorder.findFirst({
             where: { id: parseInt(id), companyId: parseInt(companyId) },
@@ -463,10 +765,95 @@ const deleteOrder = async (req, res) => {
     }
 };
 
+const convertToDeliveryChallan = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
+
+        if (!companyId) {
+            return res.status(400).json({ success: false, message: 'Company ID is required' });
+        }
+
+        const result = await prisma.$transaction(async (tx) => {
+            const order = await tx.salesorder.findFirst({
+                where: { id: parseInt(id), companyId: parseInt(companyId) },
+                include: { salesorderitem: true, customer: true }
+            });
+
+            if (!order) {
+                throw new Error('Sales Order not found');
+            }
+
+            if (order.status === 'CONVERTED') {
+                throw new Error('Sales Order has already been converted');
+            }
+
+            // Filter items to physical products only
+            const physicalItems = order.salesorderitem.filter(item => item.productId !== null);
+            if (physicalItems.length === 0) {
+                throw new Error('This Sales Order contains no physical products to deliver');
+            }
+
+            // Generate Delivery Challan number
+            const numbering = await numberingService.getNextNumber(companyId, 'deliverychallan');
+            const challanNumber = numbering.formattedNumber;
+
+            // Copy items
+            const challanItems = physicalItems.map(item => ({
+                productId: item.productId,
+                warehouseId: item.warehouseId || 1, // fallback to a default warehouse ID if not set
+                quantity: item.quantity,
+                description: item.description || ''
+            }));
+
+            // Create Delivery Challan
+            const challan = await tx.deliverychallan.create({
+                data: {
+                    challanNumber,
+                    date: new Date(),
+                    customerId: order.customerId,
+                    salesOrderId: order.id,
+                    companyId: parseInt(companyId),
+                    notes: order.notes,
+                    status: 'PENDING',
+                    shippingAddress: order.shippingAddress || order.customer?.shippingAddress || order.customer?.billingAddress,
+                    shippingCity: order.shippingCity || order.customer?.shippingCity || order.customer?.billingCity,
+                    shippingState: order.shippingState || order.customer?.shippingState || order.customer?.billingState,
+                    shippingZipCode: order.shippingZipCode || order.customer?.shippingZipCode || order.customer?.billingZipCode,
+                    shippingPhone: order.customer?.phone,
+                    shippingEmail: order.customer?.email,
+                    customFields: order.customFields,
+                    remarks: order.terms,
+                    deliverychallanitem: {
+                        create: challanItems
+                    }
+                }
+            });
+
+            // Update Sales Order Status to CONVERTED
+            await tx.salesorder.update({
+                where: { id: order.id },
+                data: { status: 'CONVERTED' }
+            });
+
+            // Advance numbering
+            await numberingService.incrementNumber(companyId, 'deliverychallan', challanNumber);
+
+            return challan;
+        });
+
+        return res.status(200).json({ success: true, message: 'Sales Order converted successfully', data: result });
+    } catch (error) {
+        console.error('Error converting sales order:', error);
+        return res.status(500).json({ success: false, message: error.message || 'Error converting sales order' });
+    }
+};
+
 module.exports = {
     createOrder,
     getOrders,
     getOrderById,
     updateOrder,
-    deleteOrder
+    deleteOrder,
+    convertToDeliveryChallan
 };

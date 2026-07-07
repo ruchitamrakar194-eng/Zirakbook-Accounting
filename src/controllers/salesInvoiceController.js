@@ -48,9 +48,9 @@ const adjustInvoiceWithReturns = (invoice) => {
             const ret = returnedItemsMap[item.productId];
             let adjustedQty = item.quantity;
             let adjustedAmt = item.amount;
-            
+
             const originalQty = item.originalQuantity !== undefined ? item.originalQuantity : item.quantity;
-            
+
             if (ret) {
                 adjustedQty = Math.max(0, item.quantity - ret.quantity);
                 const itemRate = parseFloat(item.rate) || 0;
@@ -62,14 +62,14 @@ const adjustInvoiceWithReturns = (invoice) => {
                 const lineTax = (lineTaxable * itemTaxRate) / 100;
                 adjustedAmt = lineTaxable + lineTax;
             }
-            
+
             const itemRate = parseFloat(item.rate) || 0;
             const itemDiscount = parseFloat(item.discount || 0) || 0;
             const itemTaxRate = parseFloat(item.taxRate) || 0;
 
             const lineGross = adjustedQty * itemRate;
             newSubtotal += lineGross;
-            
+
             const lineTaxable = Math.max(0, lineGross - itemDiscount);
             const lineTax = (lineTaxable * itemTaxRate) / 100;
             newTaxAmount += lineTax;
@@ -154,7 +154,7 @@ const adjustInvoiceWithReturns = (invoice) => {
 // Create Sales Invoice
 const createInvoice = async (req, res) => {
     try {
-        const { invoiceNumber, date, dueDate, customerId, salesOrderId, deliveryChallanId, items, notes, taxAmount, overallDiscount, overallDiscountType, billingName, billingAddress, billingCity, billingState, billingZipCode, billingCountry, shippingName, shippingAddress, shippingCity, shippingState, shippingZipCode, shippingCountry, currency, exchangeRate, manualStatus, status } = req.body;
+        const { invoiceNumber, manualReference, date, dueDate, customerId, salesOrderId, deliveryChallanId, items, notes, taxAmount, overallDiscount, overallDiscountType, billingName, billingAddress, billingCity, billingState, billingZipCode, billingCountry, shippingName, shippingAddress, shippingCity, shippingState, shippingZipCode, shippingCountry, currency, exchangeRate, manualStatus, status } = req.body;
         // Fallback to req.body.companyId if req.user is missing (custom frontend case)
         const companyId = req.user?.companyId || req.body.companyId;
 
@@ -169,15 +169,25 @@ const createInvoice = async (req, res) => {
             return res.status(400).json({ success: false, message: 'Please provide all required fields' });
         }
 
-        // Pre-flight: Check if this invoice number / voucher number is already in use
-        const existingInvoice = await prisma.invoice.findFirst({
-            where: { companyId: parseInt(companyId), invoiceNumber }
-        });
-        if (existingInvoice) {
-            return res.status(400).json({
-                success: false,
-                message: `Invoice number '${invoiceNumber}' already exists. Please use a unique invoice number.`
+        // Pre-flight: Check if this manual reference is already in use
+        if (manualReference && req.query.allowDuplicate !== 'true') {
+            const existingManual = await prisma.invoice.findFirst({
+                where: { companyId: parseInt(companyId), manualReference }
             });
+            if (existingManual) {
+                let suffix = 1;
+                let nextUniqueRef = `${manualReference}-${suffix}`;
+                while (await prisma.invoice.findFirst({ where: { companyId: parseInt(companyId), manualReference: nextUniqueRef } })) {
+                    suffix++;
+                    nextUniqueRef = `${manualReference}-${suffix}`;
+                }
+                return res.status(400).json({
+                    success: false,
+                    isDuplicate: true,
+                    nextUniqueRef,
+                    message: `Manual Reference '${manualReference}' already exists.`
+                });
+            }
         }
 
         const existingJournal = await prisma.journalentry.findFirst({
@@ -298,7 +308,10 @@ const createInvoice = async (req, res) => {
             const invoice = await tx.invoice.create({
                 data: {
                     customFields: req.body.customFields ? (typeof req.body.customFields === 'string' ? req.body.customFields : JSON.stringify(req.body.customFields)) : null,
+                    salespersonId: req.body.salespersonId ? parseInt(req.body.salespersonId) : null,
+                    carNumber: req.body.carNumber || null,
                     invoiceNumber,
+                    manualReference,
                     date: new Date(date),
                     dueDate: dueDate ? new Date(dueDate) : null,
                     customerId: parseInt(customerId),
@@ -358,7 +371,7 @@ const createInvoice = async (req, res) => {
                         const allocatedSum = receipt.allocations.reduce((sum, a) => sum + a.amount, 0);
                         const availableUnallocated = receipt.amount - allocatedSum;
                         const adjustAmt = Math.min(parseFloat(adj.amount), availableUnallocated);
-                        
+
                         if (adjustAmt > 0) {
                             // Create allocation record
                             await tx.receiptinvoiceallocation.create({
@@ -415,46 +428,81 @@ const createInvoice = async (req, res) => {
                         data: { status: 'DELIVERED' } // Marks as completed
                     });
 
-                    // If Challan only RESERVED, we must ISSUE now
-                    if (config.challanAction === 'RESERVE') {
-                        for (const item of invoiceItems) {
-                            if (item.productId && item.warehouseId) {
-                                const prod = await tx.product.findUnique({
-                                    where: { id: item.productId },
-                                    include: { uom: true }
-                                });
-                                const transUom = item.uomId ? await tx.uom.findUnique({ where: { id: item.uomId } }) : null;
-                                const baseQty = convertToBaseQuantity(item.quantity, transUom, prod?.uom);
+                    // Create a map of challan items and their quantities (in base UOM)
+                    const challanQtyMap = {};
+                    for (const cItem of challan.deliverychallanitem) {
+                        if (cItem.productId && cItem.warehouseId) {
+                            const prod = await tx.product.findUnique({
+                                where: { id: cItem.productId },
+                                include: { uom: true }
+                            });
+                            const transUom = cItem.uomId ? await tx.uom.findUnique({ where: { id: cItem.uomId } }) : null;
+                            const baseQty = convertToBaseQuantity(cItem.quantity, transUom, prod?.uom);
+                            const key = `${cItem.productId}_${cItem.warehouseId}`;
+                            challanQtyMap[key] = (challanQtyMap[key] || 0) + baseQty;
+                        }
+                    }
 
-                                // 1. Clear Challan Reservation
-                                await tx.stock.upsert({
-                                    where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
-                                    create: {
-                                        warehouseId: item.warehouseId,
-                                        productId: item.productId,
-                                        reservedQuantity: -baseQty,
-                                        quantity: -baseQty,
-                                        initialQty: 0,
-                                        minOrderQty: 0
-                                    },
-                                    update: {
-                                        reservedQuantity: { decrement: baseQty },
-                                        quantity: { decrement: baseQty }
-                                    }
-                                });
+                    for (const item of invoiceItems) {
+                        if (item.productId && item.warehouseId) {
+                            const prod = await tx.product.findUnique({
+                                where: { id: item.productId },
+                                include: { uom: true }
+                            });
+                            const transUom = item.uomId ? await tx.uom.findUnique({ where: { id: item.uomId } }) : null;
+                            const invBaseQty = convertToBaseQuantity(item.quantity, transUom, prod?.uom);
 
-                                // 2. Log Transaction
+                            const key = `${item.productId}_${item.warehouseId}`;
+                            const challanHandledQty = challanQtyMap[key] || 0;
+
+                            if (config.challanAction === 'RESERVE') {
+                                // Clear reservation for the portion that was in challan
+                                const qtyToClear = Math.min(invBaseQty, challanHandledQty);
+                                if (qtyToClear > 0) {
+                                    await tx.stock.upsert({
+                                        where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
+                                        create: { warehouseId: item.warehouseId, productId: item.productId, reservedQuantity: -qtyToClear, quantity: -qtyToClear, initialQty: 0, minOrderQty: 0 },
+                                        update: { reservedQuantity: { decrement: qtyToClear }, quantity: { decrement: qtyToClear } }
+                                    });
+                                }
+
+                                // The remaining 'extra' quantity directly ISSUED (decremented) from stock
+                                const extraQty = invBaseQty - qtyToClear;
+                                if (extraQty > 0) {
+                                    await tx.stock.upsert({
+                                        where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
+                                        create: { warehouseId: item.warehouseId, productId: item.productId, quantity: -extraQty, initialQty: 0, minOrderQty: 0 },
+                                        update: { quantity: { decrement: extraQty } }
+                                    });
+                                }
+
+                                challanQtyMap[key] -= qtyToClear;
+
                                 await tx.inventorytransaction.create({
                                     data: {
-                                        type: 'SALE',
-                                        productId: item.productId,
-                                        fromWarehouseId: item.warehouseId,
-                                        quantity: baseQty,
-                                        reason: `Invoice from Reserved Challan: ${invoiceNumber}`,
-                                        companyId: parseInt(companyId),
-                                        userId: req.user?.userId || null
+                                        type: 'SALE', productId: item.productId, fromWarehouseId: item.warehouseId,
+                                        quantity: invBaseQty, reason: `Invoice from Reserved Challan: ${invoiceNumber}`,
+                                        companyId: parseInt(companyId), userId: req.user?.userId || null
                                     }
                                 });
+                            } else if (config.challanAction === 'ISSUE') {
+                                // Issue only EXTRA stock
+                                const extraQty = Math.max(0, invBaseQty - challanHandledQty);
+                                if (extraQty > 0) {
+                                    await tx.stock.upsert({
+                                        where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
+                                        create: { warehouseId: item.warehouseId, productId: item.productId, quantity: -extraQty, initialQty: 0, minOrderQty: 0 },
+                                        update: { quantity: { decrement: extraQty } }
+                                    });
+                                    await tx.inventorytransaction.create({
+                                        data: {
+                                            type: 'SALE', productId: item.productId, fromWarehouseId: item.warehouseId,
+                                            quantity: extraQty, reason: `Extra items in Invoice from Challan: ${invoiceNumber}`,
+                                            companyId: parseInt(companyId), userId: req.user?.userId || null
+                                        }
+                                    });
+                                }
+                                challanQtyMap[key] = Math.max(0, challanHandledQty - invBaseQty);
                             }
                         }
                     }
@@ -856,6 +904,7 @@ const getInvoices = async (req, res) => {
                 where: { companyId: parseInt(companyId) },
                 include: {
                     customer: { select: { id: true, name: true, email: true, ledgerId: true } },
+                    salesperson: true,
                     invoiceitem: {
                         include: {
                             product: true,
@@ -1019,6 +1068,7 @@ const getInvoiceById = async (req, res) => {
         let invoice = await prisma.invoice.findFirst({
             where: { id: parsedId, companyId: parseInt(companyId) },
             include: {
+                salesperson: true,
                 invoiceitem: {
                     include: {
                         product: true,
@@ -1305,24 +1355,30 @@ const updateInvoice = async (req, res) => {
                     }))
                 });
 
-                for (const item of existingInvoice.invoiceitem) {
-                    if (item.productId) {
-                        // Find which warehouse was used (warehouseId may be in item or resolved earlier)
-                        const wId = item.warehouseId;
-                        if (wId) {
-                            await tx.stock.upsert({
-                                where: { warehouseId_productId: { warehouseId: wId, productId: item.productId } },
-                                create: {
-                                    warehouseId: wId,
-                                    productId: item.productId,
-                                    quantity: item.quantity,
-                                    initialQty: 0,
-                                    minOrderQty: 0
-                                },
-                                update: {
-                                    quantity: { increment: item.quantity }
-                                }
-                            });
+                const company = await tx.company.findUnique({ where: { id: parseInt(companyId) } });
+                const config = company.inventoryConfig || {};
+                const challanAction = config.challanAction || 'ISSUE';
+
+                if (!existingInvoice.deliveryChallanId || challanAction === 'RESERVE') {
+                    for (const item of existingInvoice.invoiceitem) {
+                        if (item.productId) {
+                            // Find which warehouse was used (warehouseId may be in item or resolved earlier)
+                            const wId = item.warehouseId;
+                            if (wId) {
+                                await tx.stock.upsert({
+                                    where: { warehouseId_productId: { warehouseId: wId, productId: item.productId } },
+                                    create: {
+                                        warehouseId: wId,
+                                        productId: item.productId,
+                                        quantity: item.quantity,
+                                        initialQty: 0,
+                                        minOrderQty: 0
+                                    },
+                                    update: {
+                                        quantity: { increment: item.quantity }
+                                    }
+                                });
+                            }
                         }
                     }
                 }
@@ -1376,7 +1432,7 @@ const updateInvoice = async (req, res) => {
                         const allocatedSum = receipt.allocations.reduce((sum, a) => sum + a.amount, 0);
                         const availableUnallocated = receipt.amount - allocatedSum;
                         const adjustAmt = Math.min(parseFloat(adj.amount), availableUnallocated);
-                        
+
                         if (adjustAmt > 0) {
                             await tx.receiptinvoiceallocation.create({
                                 data: {
@@ -1396,7 +1452,10 @@ const updateInvoice = async (req, res) => {
                 where: { id: parseInt(id) },
                 data: {
                     customFields: req.body.customFields !== undefined ? (typeof req.body.customFields === 'string' ? req.body.customFields : JSON.stringify(req.body.customFields)) : undefined,
+                    salespersonId: req.body.salespersonId !== undefined ? (req.body.salespersonId ? parseInt(req.body.salespersonId) : null) : undefined,
+                    carNumber: req.body.carNumber !== undefined ? req.body.carNumber : undefined,
                     invoiceNumber: data.invoiceNumber,
+                    manualReference: data.manualReference,
                     date: data.date ? new Date(data.date) : undefined,
                     dueDate: data.dueDate ? new Date(data.dueDate) : undefined,
                     customerId: data.customerId ? parseInt(data.customerId) : undefined,
@@ -1450,41 +1509,47 @@ const updateInvoice = async (req, res) => {
 
             // D. Apply new stock if items changed
             if (items) {
-                for (const item of (invoiceItemsData || [])) {
-                    if (item.productId) {
-                        // Auto-resolve warehouse if not provided
-                        let resolvedWId = item.warehouseId;
-                        if (!resolvedWId) {
-                            const firstBatch = await tx.inventory_batch.findFirst({
-                                where: { productId: parseInt(item.productId), qtyRemaining: { gt: 0 } },
-                                orderBy: { createdAt: 'asc' },
-                                select: { warehouseId: true }
-                            });
-                            if (firstBatch) {
-                                resolvedWId = firstBatch.warehouseId;
-                            } else {
-                                const firstStock = await tx.stock.findFirst({
-                                    where: { productId: parseInt(item.productId), quantity: { gt: 0 } },
-                                    orderBy: { quantity: 'desc' },
+                const companyInfo = await tx.company.findUnique({ where: { id: parseInt(companyId) } });
+                const inventoryConfigObj = companyInfo.inventoryConfig || {};
+                const localChallanAction = inventoryConfigObj.challanAction || 'ISSUE';
+
+                if (!existingInvoice.deliveryChallanId || localChallanAction === 'RESERVE') {
+                    for (const item of (invoiceItemsData || [])) {
+                        if (item.productId) {
+                            // Auto-resolve warehouse if not provided
+                            let resolvedWId = item.warehouseId;
+                            if (!resolvedWId) {
+                                const firstBatch = await tx.inventory_batch.findFirst({
+                                    where: { productId: parseInt(item.productId), qtyRemaining: { gt: 0 } },
+                                    orderBy: { createdAt: 'asc' },
                                     select: { warehouseId: true }
                                 });
-                                if (firstStock) resolvedWId = firstStock.warehouseId;
-                            }
-                        }
-                        if (resolvedWId) {
-                            await tx.stock.upsert({
-                                where: { warehouseId_productId: { warehouseId: resolvedWId, productId: parseInt(item.productId) } },
-                                create: {
-                                    warehouseId: resolvedWId,
-                                    productId: parseInt(item.productId),
-                                    quantity: -item.quantity,
-                                    initialQty: 0,
-                                    minOrderQty: 0
-                                },
-                                update: {
-                                    quantity: { decrement: item.quantity }
+                                if (firstBatch) {
+                                    resolvedWId = firstBatch.warehouseId;
+                                } else {
+                                    const firstStock = await tx.stock.findFirst({
+                                        where: { productId: parseInt(item.productId), quantity: { gt: 0 } },
+                                        orderBy: { quantity: 'desc' },
+                                        select: { warehouseId: true }
+                                    });
+                                    if (firstStock) resolvedWId = firstStock.warehouseId;
                                 }
-                            });
+                            }
+                            if (resolvedWId) {
+                                await tx.stock.upsert({
+                                    where: { warehouseId_productId: { warehouseId: resolvedWId, productId: parseInt(item.productId) } },
+                                    create: {
+                                        warehouseId: resolvedWId,
+                                        productId: parseInt(item.productId),
+                                        quantity: -item.quantity,
+                                        initialQty: 0,
+                                        minOrderQty: 0
+                                    },
+                                    update: {
+                                        quantity: { decrement: item.quantity }
+                                    }
+                                });
+                            }
                         }
                     }
                 }
@@ -1939,6 +2004,7 @@ const getPublicInvoiceById = async (req, res) => {
         const invoice = await prisma.invoice.findUnique({
             where: { id: parsedId },
             include: {
+                salesperson: true,
                 invoiceitem: {
                     include: {
                         product: true,

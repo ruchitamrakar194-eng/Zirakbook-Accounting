@@ -10,5 +10,7 @@ router.get('/', goodsReceiptNoteController.getGRNs);
 router.get('/:id', goodsReceiptNoteController.getGRNById);
 router.put('/:id', goodsReceiptNoteController.updateGRN);
 router.delete('/:id', goodsReceiptNoteController.deleteGRN);
+router.post('/convert-multiple', goodsReceiptNoteController.convertMultipleToPurchaseBill);
+router.post('/:id/convert', goodsReceiptNoteController.convertToPurchaseBill);
 
 module.exports = router;

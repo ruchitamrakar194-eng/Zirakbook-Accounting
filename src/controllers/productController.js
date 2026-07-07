@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { getConversionRate, getCompanyCurrency, getCompanyHistoricalCurrency } = require('../utils/currencyConverter');
 const { cloudinary } = require('../utils/cloudinaryConfig');
 const { getInventoryConfig, recordStockIn } = require('../services/inventoryValuationService');
 
@@ -91,6 +92,10 @@ const createProduct = async (req, res) => {
             }
         }
 
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const histCurr = await getCompanyHistoricalCurrency(companyId);
+        const writeRate = await getConversionRate(companyCurrency, histCurr);
+
         const productData = {
             name,
             sku: sku || null,
@@ -105,9 +110,9 @@ const createProduct = async (req, res) => {
             description: description || null,
             asOfDate: asOfDate ? new Date(asOfDate) : null,
             taxAccount: taxAccount || null,
-            initialCost: initialCost ? parseFloat(initialCost) : 0,
-            salePrice: salePrice ? parseFloat(salePrice) : 0,
-            purchasePrice: purchasePrice ? parseFloat(purchasePrice) : 0,
+            initialCost: initialCost ? (parseFloat(initialCost) * writeRate) : 0,
+            salePrice: salePrice ? (parseFloat(salePrice) * writeRate) : 0,
+            purchasePrice: purchasePrice ? (parseFloat(purchasePrice) * writeRate) : 0,
             discount: discount ? parseFloat(discount) : 0,
             remarks: remarks || null,
             companyId: parseInt(companyId)
@@ -142,10 +147,12 @@ const createProduct = async (req, res) => {
 
                 // Accounting Integration for Opening Stock
                 try {
-                    const totalOpeningValue = parsedWarehouseInfo.reduce((sum, w) => {
+                    const totalOpeningValueInBase = parsedWarehouseInfo.reduce((sum, w) => {
                         const qty = w.quantity ? parseFloat(w.quantity) : parseFloat(w.initialQty);
                         return sum + (qty * (parseFloat(initialCost) || 0));
                     }, 0);
+
+                    const totalOpeningValue = totalOpeningValueInBase * writeRate;
 
                     if (totalOpeningValue > 0) {
                         const inventoryAsset = await prisma.ledger.findFirst({
@@ -408,6 +415,10 @@ const updateProduct = async (req, res) => {
         // Delete old stocks
         await prisma.stock.deleteMany({ where: { productId: parseInt(id) } });
 
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const histCurr = await getCompanyHistoricalCurrency(companyId);
+        const writeRate = await getConversionRate(companyCurrency, histCurr);
+
         const updateData = {
             name: name || existingProduct.name,
             sku: sku || null,
@@ -422,9 +433,9 @@ const updateProduct = async (req, res) => {
             description: description || null,
             asOfDate: asOfDate ? new Date(asOfDate) : null,
             taxAccount: taxAccount || null,
-            initialCost: initialCost ? parseFloat(initialCost) : 0,
-            salePrice: salePrice ? parseFloat(salePrice) : 0,
-            purchasePrice: purchasePrice ? parseFloat(purchasePrice) : 0,
+            initialCost: initialCost ? (parseFloat(initialCost) * writeRate) : 0,
+            salePrice: salePrice ? (parseFloat(salePrice) * writeRate) : 0,
+            purchasePrice: purchasePrice ? (parseFloat(purchasePrice) * writeRate) : 0,
             discount: discount ? parseFloat(discount) : 0,
             remarks: remarks || null
         };
@@ -457,10 +468,13 @@ const updateProduct = async (req, res) => {
 
                 // Re-post new Accounting Entries for updated opening stock
                 try {
-                    const totalOpeningValue = parsedWarehouseInfo.reduce((sum, w) => {
+                    const baseInitialCost = initialCost !== undefined ? parseFloat(initialCost || 0) : (existingProduct.initialCost / writeRate);
+                    const totalOpeningValueInBase = parsedWarehouseInfo.reduce((sum, w) => {
                         const qty = w.quantity ? parseFloat(w.quantity) : parseFloat(w.initialQty);
-                        return sum + (qty * (parseFloat(initialCost || existingProduct.initialCost) || 0));
+                        return sum + (qty * baseInitialCost);
                     }, 0);
+
+                    const totalOpeningValue = totalOpeningValueInBase * writeRate;
 
                     if (totalOpeningValue > 0) {
                         const inventoryAsset = await prisma.ledger.findFirst({
@@ -612,9 +626,16 @@ const getProducts = async (req, res) => {
             orderBy: { createdAt: 'desc' }
         });
 
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const histCurr = await getCompanyHistoricalCurrency(companyId);
+        const rate = await getConversionRate(histCurr, companyCurrency);
+
         // Add total quantity to each product
         const productsWithStats = products.map(p => ({
             ...p,
+            purchasePrice: (p.purchasePrice || 0) * rate,
+            salePrice: (p.salePrice || 0) * rate,
+            initialCost: (p.initialCost || 0) * rate,
             totalQuantity: p.stock.reduce((sum, s) => sum + s.quantity, 0)
         }));
 
@@ -666,6 +687,14 @@ const getProductById = async (req, res) => {
 
         if (!product) return res.status(404).json({ success: false, message: 'Product not found' });
 
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const histCurr = await getCompanyHistoricalCurrency(companyId);
+        const rate = await getConversionRate(histCurr, companyCurrency);
+
+        product.purchasePrice = (product.purchasePrice || 0) * rate;
+        product.salePrice = (product.salePrice || 0) * rate;
+        product.initialCost = (product.initialCost || 0) * rate;
+
         res.status(200).json({ success: true, data: product });
     } catch (error) {
         console.error('Error fetching product:', error);
@@ -688,6 +717,20 @@ const deleteProduct = async (req, res) => {
 
         if (!product) {
             return res.status(404).json({ success: false, message: 'Product not found' });
+        }
+
+        // Prevent deletion if transactions exist
+        const hasInvoice = await prisma.invoiceitem.findFirst({ where: { productId: parseInt(id) } });
+        const hasPos = await prisma.posinvoiceitem.findFirst({ where: { productId: parseInt(id) } });
+        const hasPurchase = await prisma.purchasebillitem.findFirst({ where: { productId: parseInt(id) } });
+        const hasDeliveryChallan = await prisma.deliverychallanitem.findFirst({ where: { productId: parseInt(id) } });
+        const hasGrn = await prisma.goodsreceiptnoteitem.findFirst({ where: { productId: parseInt(id) } });
+
+        if (hasInvoice || hasPos || hasPurchase || hasDeliveryChallan || hasGrn) {
+            return res.status(400).json({ 
+                success: false, 
+                message: 'Cannot delete product because it is used in transactions (Invoices, Bills, etc.).' 
+            });
         }
 
         // Clean up Opening Stock transactions for this product

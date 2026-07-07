@@ -1,16 +1,39 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const numberingService = require('../services/numberingService');
+const { getConversionRate, getCompanyCurrency } = require('../utils/currencyConverter');
 
 // Create Purchase Return (Stock OUT + Ledger Debit Vendor)
 const createReturn = async (req, res) => {
     try {
-        const { returnNumber, date, vendorId, purchaseBillId, items, reason, totalAmount, customFields } = req.body;
+        const { returnNumber, date, vendorId, purchaseBillId, items, reason, totalAmount, customFields, currency, exchangeRate } = req.body;
         const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
 
         if (!returnNumber || !vendorId || !items || items.length === 0) {
             return res.status(400).json({ success: false, message: 'Please provide all required fields' });
         }
+
+        // --- Currency Setup ---
+        let docCurrency = currency || null;
+        let docExchangeRate = parseFloat(exchangeRate) || null;
+
+        if (purchaseBillId && (!docCurrency || !docExchangeRate)) {
+            const srcBill = await prisma.purchasebill.findUnique({
+                where: { id: parseInt(purchaseBillId) },
+                select: { currency: true, exchangeRate: true }
+            });
+            if (srcBill) {
+                docCurrency = docCurrency || srcBill.currency || 'USD';
+                docExchangeRate = docExchangeRate || parseFloat(srcBill.exchangeRate) || 1.0;
+            }
+        }
+        if (!docCurrency) {
+            docCurrency = await getCompanyCurrency(companyId);
+        }
+        if (!docExchangeRate) {
+            docExchangeRate = await getConversionRate(docCurrency, await getCompanyCurrency(companyId));
+        }
+        const exRate = docExchangeRate || 1.0;
 
         const returnItems = items.map(item => ({
             productId: parseInt(item.productId),
@@ -68,11 +91,61 @@ const createReturn = async (req, res) => {
                         reason: `Purchase Return: ${returnNumber}`
                     }
                 });
+
+                // Update WAC product fields in base currency
+                const currentProduct = await tx.product.findUnique({
+                    where: { id: item.productId }
+                });
+                if (currentProduct) {
+                    const currentQty = parseFloat(currentProduct.totalQty || 0);
+                    const currentValue = parseFloat(currentProduct.totalInventoryValue || 0);
+                    const returnValBase = item.amount * exRate;
+                    const newTotalQty = Math.max(0, currentQty - item.quantity);
+                    const newTotalValue = Math.max(0, currentValue - returnValBase);
+                    const newAverageCost = newTotalQty > 0 ? newTotalValue / newTotalQty : currentProduct.averageCost;
+
+                    await tx.product.update({
+                        where: { id: item.productId },
+                        data: {
+                            totalQty: newTotalQty,
+                            totalInventoryValue: newTotalValue,
+                            averageCost: newAverageCost
+                        }
+                    });
+                }
+
+                // Update FIFO batches
+                if (purchaseBillId) {
+                    const batch = await tx.inventory_batch.findFirst({
+                        where: {
+                            productId: item.productId,
+                            purchaseBillId: parseInt(purchaseBillId),
+                            warehouseId: item.warehouseId
+                        }
+                    });
+                    if (batch) {
+                        await tx.inventory_batch.update({
+                            where: { id: batch.id },
+                            data: {
+                                qtyRemaining: { decrement: item.quantity }
+                            }
+                        });
+                    }
+                }
             }
 
-            // 3. Ledger Posting (Dr Vendor, Cr Inventory/Purchase)
+            // 3. Ledger Posting (Dr Vendor/Cash, Cr Inventory/Purchase)
             const vendor = await tx.vendor.findUnique({ where: { id: parseInt(vendorId) }, include: { ledger: true } });
             if (!vendor || !vendor.ledger) throw new Error('Vendor ledger not found');
+
+            // Check if purchase bill is paid
+            let isBillPaid = false;
+            if (purchaseBillId) {
+                const purchaseBill = await tx.purchasebill.findUnique({ where: { id: parseInt(purchaseBillId) } });
+                if (purchaseBill && (purchaseBill.status === 'PAID' || purchaseBill.status === 'Paid' || purchaseBill.paidAmount >= purchaseBill.totalAmount)) {
+                    isBillPaid = true;
+                }
+            }
 
             // Resolve Ledgers
             const inventoryLedger = await tx.ledger.findFirst({
@@ -81,12 +154,16 @@ const createReturn = async (req, res) => {
             const purchaseLedger = await tx.ledger.findFirst({
                 where: { companyId: parseInt(companyId), name: { contains: 'Purchase' }, accountgroup: { type: 'EXPENSES' } }
             });
+            const cashLedger = await tx.ledger.findFirst({
+                where: { companyId: parseInt(companyId), name: { contains: 'Cash in Hand' }, accountgroup: { type: 'ASSETS' } }
+            }) || await tx.ledger.findFirst({
+                where: { companyId: parseInt(companyId), name: { contains: 'Main Bank Account' }, accountgroup: { type: 'ASSETS' } }
+            });
 
-            const debitLedgerId = vendor.ledger.id;
+            const debitLedgerId = isBillPaid && cashLedger ? cashLedger.id : vendor.ledger.id;
             const creditLedgerId = inventoryLedger?.id || purchaseLedger?.id;
 
             if (!creditLedgerId) throw new Error('Could not find appropriate ledger (Purchase or Inventory) for return');
-
 
             // Create Journal Entry
             const journalEntry = await tx.journalentry.create({
@@ -98,13 +175,14 @@ const createReturn = async (req, res) => {
                 }
             });
 
-            // Debit Vendor (Reduce Liability)
+            // Debit Vendor/Cash, Credit Purchases/Inventory
+            const ledgerTotalAmount = parseFloat(totalAmount) * exRate;
             await tx.transaction.create({
                 data: {
                     date: new Date(date),
-                    amount: parseFloat(totalAmount),
+                    amount: ledgerTotalAmount,
                     debitLedgerId: debitLedgerId,
-                    creditLedgerId: creditLedgerId, // Just for record, though separate lines preferred
+                    creditLedgerId: creditLedgerId,
                     voucherType: 'PURCHASE_RETURN',
                     voucherNumber: returnNumber,
                     companyId: parseInt(companyId),
@@ -113,23 +191,29 @@ const createReturn = async (req, res) => {
                 }
             });
 
-            // Update Vendor Balance (Debit reduces Credit balance for Vendor)
-            // Vendor has Credit Balance type usually. Debit reduces it.
-            // But we store 'accountBalance'. If it's a liability, positive means credit.
-            // So Debit means subtracting from balance.
-            await tx.vendor.update({
-                where: { id: parseInt(vendorId) },
-                data: { accountBalance: { decrement: parseFloat(totalAmount) } }
-            });
+            // Update Vendor Balance if not paid in cash
+            if (!isBillPaid) {
+                await tx.vendor.update({
+                    where: { id: parseInt(vendorId) },
+                    data: { accountBalance: { decrement: ledgerTotalAmount } }
+                });
+            }
 
             // Update Ledger Balances
-            await tx.ledger.update({
-                where: { id: debitLedgerId },
-                data: { currentBalance: { decrement: parseFloat(totalAmount) } } // Vendor (Liability) decreases
-            });
+            if (isBillPaid) {
+                await tx.ledger.update({
+                    where: { id: debitLedgerId },
+                    data: { currentBalance: { increment: ledgerTotalAmount } } // Cash (Asset) increases
+                });
+            } else {
+                await tx.ledger.update({
+                    where: { id: debitLedgerId },
+                    data: { currentBalance: { decrement: ledgerTotalAmount } } // Vendor (Liability) decreases
+                });
+            }
             await tx.ledger.update({
                 where: { id: creditLedgerId },
-                data: { currentBalance: { decrement: parseFloat(totalAmount) } } // Purchase (Expense) decreases
+                data: { currentBalance: { decrement: ledgerTotalAmount } } // Purchase (Expense) decreases
             });
 
             return purchaseReturn;
@@ -215,12 +299,23 @@ const getReturnById = async (req, res) => {
 const updateReturn = async (req, res) => {
     try {
         const { id } = req.params;
-        const { returnNumber, date, vendorId, purchaseBillId, items, reason, totalAmount, customFields } = req.body;
+        const { returnNumber, date, vendorId, purchaseBillId, items, reason, totalAmount, customFields, currency, exchangeRate } = req.body;
         const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
+
+        // --- Currency Setup ---
+        let docExchangeRate = parseFloat(exchangeRate) || null;
+        if (purchaseBillId && !docExchangeRate) {
+            const srcBill = await prisma.purchasebill.findUnique({
+                where: { id: parseInt(purchaseBillId) },
+                select: { exchangeRate: true }
+            });
+            docExchangeRate = srcBill ? (parseFloat(srcBill.exchangeRate) || 1.0) : 1.0;
+        }
+        const exRate = docExchangeRate || 1.0;
 
         const existingReturn = await prisma.purchasereturn.findFirst({
             where: { id: parseInt(id), companyId: parseInt(companyId) },
-            include: { purchasereturnitem: true }
+            include: { purchasereturnitem: true, purchasebill: true }
         });
 
         if (!existingReturn) {
@@ -237,6 +332,7 @@ const updateReturn = async (req, res) => {
 
         const result = await prisma.$transaction(async (tx) => {
             // 1. Revert Physical Stock of Old Items (Increment stock since purchase return decremented it)
+            const oldExRate = existingReturn.purchasebill ? (parseFloat(existingReturn.purchasebill.exchangeRate) || 1.0) : 1.0;
             for (const item of existingReturn.purchasereturnitem) {
                 await tx.stock.upsert({
                     where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
@@ -251,6 +347,47 @@ const updateReturn = async (req, res) => {
                         quantity: { increment: item.quantity }
                     }
                 });
+
+                // Revert WAC product fields
+                const currentProduct = await tx.product.findUnique({
+                    where: { id: item.productId }
+                });
+                if (currentProduct) {
+                    const currentQty = parseFloat(currentProduct.totalQty || 0);
+                    const currentValue = parseFloat(currentProduct.totalInventoryValue || 0);
+                    const returnValBase = item.amount * oldExRate;
+                    const newTotalQty = currentQty + item.quantity;
+                    const newTotalValue = currentValue + returnValBase;
+                    const newAverageCost = newTotalQty > 0 ? newTotalValue / newTotalQty : currentProduct.averageCost;
+
+                    await tx.product.update({
+                        where: { id: item.productId },
+                        data: {
+                            totalQty: newTotalQty,
+                            totalInventoryValue: newTotalValue,
+                            averageCost: newAverageCost
+                        }
+                    });
+                }
+
+                // Revert FIFO batch
+                if (existingReturn.purchaseBillId) {
+                    const batch = await tx.inventory_batch.findFirst({
+                        where: {
+                            productId: item.productId,
+                            purchaseBillId: parseInt(existingReturn.purchaseBillId),
+                            warehouseId: item.warehouseId
+                        }
+                    });
+                    if (batch) {
+                        await tx.inventory_batch.update({
+                            where: { id: batch.id },
+                            data: {
+                                qtyRemaining: { increment: item.quantity }
+                            }
+                        });
+                    }
+                }
             }
 
             // Delete old inventory transactions
@@ -266,12 +403,6 @@ const updateReturn = async (req, res) => {
             const oldVendorId = existingReturn.vendorId;
             const oldTotalAmount = parseFloat(existingReturn.totalAmount);
 
-            // Revert vendor account balance (add it back, since it was decremented on return)
-            await tx.vendor.update({
-                where: { id: oldVendorId },
-                data: { accountBalance: { increment: oldTotalAmount } }
-            });
-
             // Revert transaction ledger balances
             const txs = await tx.transaction.findMany({
                 where: {
@@ -281,11 +412,39 @@ const updateReturn = async (req, res) => {
                 }
             });
 
-            for (const t of txs) {
-                await tx.ledger.update({
-                    where: { id: t.debitLedgerId },
-                    data: { currentBalance: { increment: t.amount } } // Vendor ledger (Liability) increases back
+            const cashLedger = await tx.ledger.findFirst({
+                where: { companyId: parseInt(companyId), name: { contains: 'Cash in Hand' }, accountgroup: { type: 'ASSETS' } }
+            }) || await tx.ledger.findFirst({
+                where: { companyId: parseInt(companyId), name: { contains: 'Main Bank Account' }, accountgroup: { type: 'ASSETS' } }
+            });
+
+            let wasOldRefundPaid = false;
+            const originalTx = txs[0];
+            const oldDebitLedgerId = originalTx ? originalTx.debitLedgerId : null;
+            if (oldDebitLedgerId && cashLedger && oldDebitLedgerId === cashLedger.id) {
+                wasOldRefundPaid = true;
+            }
+
+            // Revert vendor account balance (only if the old return was not cash refund)
+            if (!wasOldRefundPaid) {
+                await tx.vendor.update({
+                    where: { id: oldVendorId },
+                    data: { accountBalance: { increment: oldTotalAmount } }
                 });
+            }
+
+            for (const t of txs) {
+                if (wasOldRefundPaid && t.debitLedgerId === cashLedger.id) {
+                    await tx.ledger.update({
+                        where: { id: t.debitLedgerId },
+                        data: { currentBalance: { decrement: t.amount } } // Cash (Asset) decreases back
+                    });
+                } else {
+                    await tx.ledger.update({
+                        where: { id: t.debitLedgerId },
+                        data: { currentBalance: { increment: t.amount } } // Vendor ledger (Liability) increases back
+                    });
+                }
                 await tx.ledger.update({
                     where: { id: t.creditLedgerId },
                     data: { currentBalance: { increment: t.amount } } // Purchases ledger (Expense) increases back
@@ -369,6 +528,47 @@ const updateReturn = async (req, res) => {
                         reason: `Purchase Return: ${returnNumber}`
                     }
                 });
+
+                // Update WAC product fields in base currency
+                const currentProduct = await tx.product.findUnique({
+                    where: { id: item.productId }
+                });
+                if (currentProduct) {
+                    const currentQty = parseFloat(currentProduct.totalQty || 0);
+                    const currentValue = parseFloat(currentProduct.totalInventoryValue || 0);
+                    const returnValBase = item.amount * exRate;
+                    const newTotalQty = Math.max(0, currentQty - item.quantity);
+                    const newTotalValue = Math.max(0, currentValue - returnValBase);
+                    const newAverageCost = newTotalQty > 0 ? newTotalValue / newTotalQty : currentProduct.averageCost;
+
+                    await tx.product.update({
+                        where: { id: item.productId },
+                        data: {
+                            totalQty: newTotalQty,
+                            totalInventoryValue: newTotalValue,
+                            averageCost: newAverageCost
+                        }
+                    });
+                }
+
+                // Update FIFO batches
+                if (purchaseBillId) {
+                    const batch = await tx.inventory_batch.findFirst({
+                        where: {
+                            productId: item.productId,
+                            purchaseBillId: parseInt(purchaseBillId),
+                            warehouseId: item.warehouseId
+                        }
+                    });
+                    if (batch) {
+                        await tx.inventory_batch.update({
+                            where: { id: batch.id },
+                            data: {
+                                qtyRemaining: { decrement: item.quantity }
+                            }
+                        });
+                    }
+                }
             }
 
             // 5. Apply New Ledger and Vendor Balances
@@ -379,6 +579,15 @@ const updateReturn = async (req, res) => {
             });
             if (!vendor || !vendor.ledger) throw new Error('Vendor ledger not found');
 
+            // Check if purchase bill is paid
+            let isNewBillPaid = false;
+            if (purchaseBillId) {
+                const purchaseBill = await tx.purchasebill.findUnique({ where: { id: parseInt(purchaseBillId) } });
+                if (purchaseBill && (purchaseBill.status === 'PAID' || purchaseBill.status === 'Paid' || purchaseBill.paidAmount >= purchaseBill.totalAmount)) {
+                    isNewBillPaid = true;
+                }
+            }
+
             const inventoryLedger = await tx.ledger.findFirst({
                 where: { companyId: parseInt(companyId), name: { contains: 'Inventory' }, accountgroup: { type: 'ASSETS' } }
             });
@@ -386,7 +595,7 @@ const updateReturn = async (req, res) => {
                 where: { companyId: parseInt(companyId), name: { contains: 'Purchase' }, accountgroup: { type: 'EXPENSES' } }
             });
 
-            const debitLedgerId = vendor.ledger.id;
+            const debitLedgerId = isNewBillPaid && cashLedger ? cashLedger.id : vendor.ledger.id;
             const creditLedgerId = inventoryLedger?.id || purchaseLedger?.id;
 
             if (!creditLedgerId) throw new Error('Could not find appropriate ledger (Purchase or Inventory) for return');
@@ -403,11 +612,13 @@ const updateReturn = async (req, res) => {
 
             const finalAmount = totalAmount ? parseFloat(totalAmount) : parseFloat(existingReturn.totalAmount);
 
-            // Debit Vendor (Reduce Liability), Credit Purchases/Inventory
+            const ledgerFinalAmount = finalAmount * exRate;
+
+            // Debit Vendor/Cash, Credit Purchases/Inventory
             await tx.transaction.create({
                 data: {
                     date: new Date(date),
-                    amount: finalAmount,
+                    amount: ledgerFinalAmount,
                     debitLedgerId: debitLedgerId,
                     creditLedgerId: creditLedgerId,
                     voucherType: 'PURCHASE_RETURN',
@@ -418,20 +629,29 @@ const updateReturn = async (req, res) => {
                 }
             });
 
-            // Update Vendor Balance (Debit reduces Credit balance for Vendor)
-            await tx.vendor.update({
-                where: { id: targetVendorId },
-                data: { accountBalance: { decrement: finalAmount } }
-            });
+            // Update Vendor Balance if not paid in cash
+            if (!isNewBillPaid) {
+                await tx.vendor.update({
+                    where: { id: targetVendorId },
+                    data: { accountBalance: { decrement: ledgerFinalAmount } }
+                });
+            }
 
             // Update Ledger Balances
-            await tx.ledger.update({
-                where: { id: debitLedgerId },
-                data: { currentBalance: { decrement: finalAmount } }
-            });
+            if (isNewBillPaid) {
+                await tx.ledger.update({
+                    where: { id: debitLedgerId },
+                    data: { currentBalance: { increment: ledgerFinalAmount } } // Cash (Asset) increases
+                });
+            } else {
+                await tx.ledger.update({
+                    where: { id: debitLedgerId },
+                    data: { currentBalance: { decrement: ledgerFinalAmount } } // Vendor (Liability) decreases
+                });
+            }
             await tx.ledger.update({
                 where: { id: creditLedgerId },
-                data: { currentBalance: { decrement: finalAmount } }
+                data: { currentBalance: { decrement: ledgerFinalAmount } }
             });
 
             return updatedReturn;
@@ -451,7 +671,7 @@ const deleteReturn = async (req, res) => {
 
         const purchaseReturn = await prisma.purchasereturn.findFirst({
             where: { id: parseInt(id), companyId: parseInt(companyId) },
-            include: { purchasereturnitem: true }
+            include: { purchasereturnitem: true, purchasebill: true }
         });
 
         if (!purchaseReturn) {
@@ -460,6 +680,7 @@ const deleteReturn = async (req, res) => {
 
         await prisma.$transaction(async (tx) => {
             // 1. Revert Stock
+            const exRate = purchaseReturn.purchasebill ? (parseFloat(purchaseReturn.purchasebill.exchangeRate) || 1.0) : 1.0;
             for (const item of purchaseReturn.purchasereturnitem) {
                 await tx.stock.upsert({
                     where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
@@ -474,6 +695,47 @@ const deleteReturn = async (req, res) => {
                         quantity: { increment: item.quantity }
                     }
                 });
+
+                // Revert WAC product fields
+                const currentProduct = await tx.product.findUnique({
+                    where: { id: item.productId }
+                });
+                if (currentProduct) {
+                    const currentQty = parseFloat(currentProduct.totalQty || 0);
+                    const currentValue = parseFloat(currentProduct.totalInventoryValue || 0);
+                    const returnValBase = item.amount * exRate;
+                    const newTotalQty = currentQty + item.quantity;
+                    const newTotalValue = currentValue + returnValBase;
+                    const newAverageCost = newTotalQty > 0 ? newTotalValue / newTotalQty : currentProduct.averageCost;
+
+                    await tx.product.update({
+                        where: { id: item.productId },
+                        data: {
+                            totalQty: newTotalQty,
+                            totalInventoryValue: newTotalValue,
+                            averageCost: newAverageCost
+                        }
+                    });
+                }
+
+                // Revert FIFO batch
+                if (purchaseReturn.purchaseBillId) {
+                    const batch = await tx.inventory_batch.findFirst({
+                        where: {
+                            productId: item.productId,
+                            purchaseBillId: parseInt(purchaseReturn.purchaseBillId),
+                            warehouseId: item.warehouseId
+                        }
+                    });
+                    if (batch) {
+                        await tx.inventory_batch.update({
+                            where: { id: batch.id },
+                            data: {
+                                qtyRemaining: { increment: item.quantity }
+                            }
+                        });
+                    }
+                }
             }
 
             // 2. Revert Ledger Balances and Vendor Balance
@@ -485,21 +747,43 @@ const deleteReturn = async (req, res) => {
                 }
             });
 
+            const cashLedger = await tx.ledger.findFirst({
+                where: { companyId: parseInt(companyId), name: { contains: 'Cash in Hand' }, accountgroup: { type: 'ASSETS' } }
+            }) || await tx.ledger.findFirst({
+                where: { companyId: parseInt(companyId), name: { contains: 'Main Bank Account' }, accountgroup: { type: 'ASSETS' } }
+            });
+
+            let wasRefundPaid = false;
+            const originalTx = txs[0];
+            const actualDebitLedgerId = originalTx ? originalTx.debitLedgerId : null;
+            if (actualDebitLedgerId && cashLedger && actualDebitLedgerId === cashLedger.id) {
+                wasRefundPaid = true;
+            }
+
             for (const t of txs) {
-                await tx.ledger.update({
-                    where: { id: t.debitLedgerId },
-                    data: { currentBalance: { increment: t.amount } } // Vendor (Liability) increases back
-                });
+                if (wasRefundPaid && t.debitLedgerId === cashLedger.id) {
+                    await tx.ledger.update({
+                        where: { id: t.debitLedgerId },
+                        data: { currentBalance: { decrement: t.amount } } // Cash (Asset) decreases back
+                    });
+                } else {
+                    await tx.ledger.update({
+                        where: { id: t.debitLedgerId },
+                        data: { currentBalance: { increment: t.amount } } // Vendor (Liability) increases back
+                    });
+                }
                 await tx.ledger.update({
                     where: { id: t.creditLedgerId },
                     data: { currentBalance: { increment: t.amount } } // Purchase (Expense) increases back
                 });
             }
 
-            await tx.vendor.update({
-                where: { id: purchaseReturn.vendorId },
-                data: { accountBalance: { increment: purchaseReturn.totalAmount } }
-            });
+            if (!wasRefundPaid) {
+                await tx.vendor.update({
+                    where: { id: purchaseReturn.vendorId },
+                    data: { accountBalance: { increment: purchaseReturn.totalAmount } }
+                });
+            }
 
             // 3. Cleanup Accounting Records
             const journalEntryIds = [...new Set(txs.map(t => t.journalEntryId).filter(Boolean))];
@@ -540,6 +824,17 @@ const deleteReturn = async (req, res) => {
 
 const deletePurchaseReturnHelper = async (tx, purchaseReturn, companyId) => {
     // 1. Revert Stock
+    let exRate = 1.0;
+    if (purchaseReturn.purchaseBillId) {
+        const bill = purchaseReturn.purchasebill || await tx.purchasebill.findUnique({
+            where: { id: purchaseReturn.purchaseBillId },
+            select: { exchangeRate: true }
+        });
+        if (bill) {
+            exRate = parseFloat(bill.exchangeRate) || 1.0;
+        }
+    }
+
     for (const item of purchaseReturn.purchasereturnitem) {
         await tx.stock.upsert({
             where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
@@ -554,6 +849,47 @@ const deletePurchaseReturnHelper = async (tx, purchaseReturn, companyId) => {
                 quantity: { increment: item.quantity }
             }
         });
+
+        // Revert WAC product fields
+        const currentProduct = await tx.product.findUnique({
+            where: { id: item.productId }
+        });
+        if (currentProduct) {
+            const currentQty = parseFloat(currentProduct.totalQty || 0);
+            const currentValue = parseFloat(currentProduct.totalInventoryValue || 0);
+            const returnValBase = item.amount * exRate;
+            const newTotalQty = currentQty + item.quantity;
+            const newTotalValue = currentValue + returnValBase;
+            const newAverageCost = newTotalQty > 0 ? newTotalValue / newTotalQty : currentProduct.averageCost;
+
+            await tx.product.update({
+                where: { id: item.productId },
+                data: {
+                    totalQty: newTotalQty,
+                    totalInventoryValue: newTotalValue,
+                    averageCost: newAverageCost
+                }
+            });
+        }
+
+        // Revert FIFO batch
+        if (purchaseReturn.purchaseBillId) {
+            const batch = await tx.inventory_batch.findFirst({
+                where: {
+                    productId: item.productId,
+                    purchaseBillId: parseInt(purchaseReturn.purchaseBillId),
+                    warehouseId: item.warehouseId
+                }
+            });
+            if (batch) {
+                await tx.inventory_batch.update({
+                    where: { id: batch.id },
+                    data: {
+                        qtyRemaining: { increment: item.quantity }
+                    }
+                });
+            }
+        }
     }
 
     // 2. Revert Ledger Balances and Vendor Balance
@@ -565,21 +901,43 @@ const deletePurchaseReturnHelper = async (tx, purchaseReturn, companyId) => {
         }
     });
 
+    const cashLedger = await tx.ledger.findFirst({
+        where: { companyId: parseInt(companyId), name: { contains: 'Cash in Hand' }, accountgroup: { type: 'ASSETS' } }
+    }) || await tx.ledger.findFirst({
+        where: { companyId: parseInt(companyId), name: { contains: 'Main Bank Account' }, accountgroup: { type: 'ASSETS' } }
+    });
+
+    let wasRefundPaid = false;
+    const originalTx = txs[0];
+    const actualDebitLedgerId = originalTx ? originalTx.debitLedgerId : null;
+    if (actualDebitLedgerId && cashLedger && actualDebitLedgerId === cashLedger.id) {
+        wasRefundPaid = true;
+    }
+
     for (const t of txs) {
-        await tx.ledger.update({
-            where: { id: t.debitLedgerId },
-            data: { currentBalance: { increment: t.amount } }
-        });
+        if (wasRefundPaid && t.debitLedgerId === cashLedger.id) {
+            await tx.ledger.update({
+                where: { id: t.debitLedgerId },
+                data: { currentBalance: { decrement: t.amount } } // Cash decreases
+            });
+        } else {
+            await tx.ledger.update({
+                where: { id: t.debitLedgerId },
+                data: { currentBalance: { increment: t.amount } } // Vendor increases
+            });
+        }
         await tx.ledger.update({
             where: { id: t.creditLedgerId },
             data: { currentBalance: { increment: t.amount } }
         });
     }
 
-    await tx.vendor.update({
-        where: { id: purchaseReturn.vendorId },
-        data: { accountBalance: { increment: purchaseReturn.totalAmount } }
-    });
+    if (!wasRefundPaid) {
+        await tx.vendor.update({
+            where: { id: purchaseReturn.vendorId },
+            data: { accountBalance: { increment: purchaseReturn.totalAmount } }
+        });
+    }
 
     // 3. Cleanup Accounting Records
     const journalEntryIds = [...new Set(txs.map(t => t.journalEntryId).filter(Boolean))];

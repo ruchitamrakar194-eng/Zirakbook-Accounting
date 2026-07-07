@@ -5,8 +5,21 @@ const numberingService = require('../services/numberingService');
 // Create Purchase Order (Direct or from Quotation)
 const createOrder = async (req, res) => {
     try {
-        const { orderNumber, date, expectedDate, vendorId, items, notes, quotationId, overallDiscount, overallDiscountType, customFields, manualStatus, status } = req.body;
+        const { orderNumber, manualReference, date, expectedDate, vendorId, items, notes, terms, quotationId, overallDiscount, overallDiscountType, customFields, manualStatus, status, allowDuplicateManualNo } = req.body;
         const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
+
+        if (manualReference && !(allowDuplicateManualNo === true || allowDuplicateManualNo === 'true')) {
+            const existingManual = await prisma.purchaseorder.findFirst({
+                where: { companyId: parseInt(companyId), manualReference }
+            });
+            if (existingManual) {
+                return res.status(400).json({
+                    success: false,
+                    isDuplicateWarning: true,
+                    message: `Manual reference number '${manualReference}' already exists. Do you want to use this duplicate number?`
+                });
+            }
+        }
 
         if (!orderNumber || !vendorId || !items || items.length === 0) {
             return res.status(400).json({ success: false, message: 'Please provide all required fields' });
@@ -87,6 +100,7 @@ const createOrder = async (req, res) => {
             const order = await tx.purchaseorder.create({
                 data: {
                     orderNumber,
+                    manualReference,
                     date: new Date(date),
                     expectedDate: expectedDate ? new Date(expectedDate) : null,
                     vendorId: parseInt(vendorId),
@@ -99,6 +113,7 @@ const createOrder = async (req, res) => {
                     overallDiscountType: overallDiscountType || 'percentage',
                     totalAmount: finalTotal,
                     notes,
+                    terms,
                     manualStatus: manualStatus === true || manualStatus === 'true',
                     status: (manualStatus === true || manualStatus === 'true') && status ? status : 'PENDING',
                     customFields: customFields ? (typeof customFields === 'string' ? customFields : JSON.stringify(customFields)) : null,
@@ -210,8 +225,25 @@ const getOrderById = async (req, res) => {
 const updateOrder = async (req, res) => {
     try {
         const { id } = req.params;
-        const { orderNumber, date, expectedDate, vendorId, items, notes, status, overallDiscount, overallDiscountType, customFields, manualStatus, onlyUpdateStatus } = req.body;
+        const { orderNumber, manualReference, date, expectedDate, vendorId, items, notes, terms, status, overallDiscount, overallDiscountType, customFields, manualStatus, onlyUpdateStatus, allowDuplicateManualNo } = req.body;
         const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
+
+        if (manualReference && !(allowDuplicateManualNo === true || allowDuplicateManualNo === 'true')) {
+            const existingManual = await prisma.purchaseorder.findFirst({
+                where: {
+                    companyId: parseInt(companyId),
+                    manualReference,
+                    id: { not: parseInt(id) }
+                }
+            });
+            if (existingManual) {
+                return res.status(400).json({
+                    success: false,
+                    isDuplicateWarning: true,
+                    message: `Manual reference number '${manualReference}' already exists. Do you want to use this duplicate number?`
+                });
+            }
+        }
 
         if (onlyUpdateStatus === true || onlyUpdateStatus === 'true') {
             const updated = await prisma.purchaseorder.update({
@@ -295,7 +327,7 @@ const updateOrder = async (req, res) => {
             };
         });
 
-        await prisma.$transaction(async (tx) => {
+        const result = await prisma.$transaction(async (tx) => {
             // Delete old items
             await tx.purchaseorderitem.deleteMany({
                 where: { orderId: parseInt(id) }
@@ -314,6 +346,7 @@ const updateOrder = async (req, res) => {
                 where: { id: parseInt(id) },
                 data: {
                     orderNumber,
+                    manualReference,
                     date: new Date(date),
                     expectedDate: expectedDate ? new Date(expectedDate) : null,
                     vendorId: parseInt(vendorId),
@@ -324,6 +357,7 @@ const updateOrder = async (req, res) => {
                     overallDiscountType: overallDiscountType || 'percentage',
                     totalAmount: finalTotal,
                     notes,
+                    terms,
                     manualStatus: manualStatus === true || manualStatus === 'true',
                     status: (status === 'OPEN' || !status) ? 'PENDING' : status,
                     customFields: customFields !== undefined ? (typeof customFields === 'string' ? customFields : JSON.stringify(customFields)) : undefined,
@@ -340,9 +374,55 @@ const updateOrder = async (req, res) => {
                             uomId: i.uomId
                         }))
                     }
+                },
+                include: {
+                    purchaseorderitem: true
                 }
             });
         }, { timeout: 30000 });
+
+        // Propagate updates to linked Goods Receipt Notes (GRNs) if exist
+        const grns = await prisma.goodsreceiptnote.findMany({
+            where: { purchaseOrderId: result.id, companyId: parseInt(companyId) }
+        });
+        for (const grn of grns) {
+            // Filter physical items from the updated PO
+            const physicalItems = result.purchaseorderitem.filter(i => i.productId);
+            const grnItems = physicalItems.map(i => ({
+                productId: i.productId,
+                warehouseId: i.warehouseId || 1,
+                quantity: i.quantity,
+                description: i.description || ''
+            }));
+
+            // Invoke updateGRN using mock req/res
+            const fakeReq = {
+                user: req.user,
+                params: { id: String(grn.id) },
+                body: {
+                    grnNumber: grn.grnNumber,
+                    date: grn.date.toISOString().split('T')[0],
+                    vendorId: result.vendorId,
+                    purchaseOrderId: result.id,
+                    items: grnItems,
+                    notes: grn.notes || '',
+                    customFields: grn.customFields,
+                    manualStatus: grn.manualStatus,
+                    status: grn.status,
+                    companyId: parseInt(companyId)
+                }
+            };
+
+            let responseStatus = 200;
+            let responseData = null;
+            const fakeRes = {
+                status: function(code) { responseStatus = code; return this; },
+                json: function(data) { responseData = data; return this; }
+            };
+
+            const goodsReceiptNoteController = require('./goodsReceiptNoteController');
+            await goodsReceiptNoteController.updateGRN(fakeReq, fakeRes);
+        }
 
         const updated = await prisma.purchaseorder.findFirst({
             where: { id: parseInt(id) },
@@ -391,10 +471,115 @@ const deleteOrder = async (req, res) => {
     }
 };
 
+const convertToGRN = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
+
+        if (!companyId) {
+            return res.status(400).json({ success: false, message: 'Company ID is required' });
+        }
+
+        const result = await prisma.$transaction(async (tx) => {
+            const order = await tx.purchaseorder.findFirst({
+                where: { id: parseInt(id), companyId: parseInt(companyId) },
+                include: { purchaseorderitem: true, vendor: true }
+            });
+
+            if (!order) {
+                throw new Error('Purchase Order not found');
+            }
+
+            if (order.status === 'CONVERTED') {
+                throw new Error('Purchase Order has already been converted');
+            }
+
+            // Filter items to physical products only
+            const physicalItems = order.purchaseorderitem.filter(item => item.productId !== null);
+            if (physicalItems.length === 0) {
+                throw new Error('This Purchase Order contains no physical products to receive');
+            }
+
+            // Generate GRN number
+            const numbering = await numberingService.getNextNumber(companyId, 'goodsreceiptnote');
+            const grnNumber = numbering.formattedNumber;
+
+            // Calculate already delivered quantities
+            const existingGrns = await tx.goodsreceiptnote.findMany({
+                where: { purchaseOrderId: order.id },
+                include: { goodsreceiptnoteitem: true }
+            });
+            const deliveredMap = {};
+            for (const grn of existingGrns) {
+                for (const item of grn.goodsreceiptnoteitem) {
+                    if (item.productId) {
+                        deliveredMap[item.productId] = (deliveredMap[item.productId] || 0) + item.quantity;
+                    }
+                }
+            }
+
+            // Copy items (subtracting delivered)
+            const grnItems = [];
+            for (const item of physicalItems) {
+                const ordered = item.quantity;
+                const delivered = deliveredMap[item.productId] || 0;
+                const remaining = ordered - delivered;
+                
+                if (remaining > 0) {
+                    grnItems.push({
+                        productId: item.productId,
+                        warehouseId: item.warehouseId || 1,
+                        quantity: remaining,
+                        description: item.description || ''
+                    });
+                }
+            }
+            
+            if (grnItems.length === 0) {
+                throw new Error('All physical products in this Purchase Order have already been fully received.');
+            }
+
+            // Create Goods Receipt Note
+            const grn = await tx.goodsreceiptnote.create({
+                data: {
+                    grnNumber,
+                    date: new Date(),
+                    vendorId: order.vendorId,
+                    purchaseOrderId: order.id,
+                    companyId: parseInt(companyId),
+                    notes: order.notes,
+                    status: 'Received',
+                    customFields: order.customFields,
+                    goodsreceiptnoteitem: {
+                        create: grnItems
+                    }
+                }
+            });
+
+            // Update Purchase Order Status to CONVERTED
+            await tx.purchaseorder.update({
+                where: { id: order.id },
+                data: { status: 'CONVERTED' }
+            });
+
+            // Advance numbering
+            await numberingService.incrementNumber(companyId, 'goodsreceiptnote', grnNumber);
+
+            return grn;
+        });
+
+        return res.status(200).json({ success: true, message: 'Purchase Order converted successfully', data: result });
+    } catch (error) {
+        console.error('Error converting purchase order:', error);
+        return res.status(500).json({ success: false, message: error.message || 'Error converting purchase order' });
+    }
+};
+
 module.exports = {
     createOrder,
     getOrders,
     getOrderById,
     updateOrder,
-    deleteOrder
+    deleteOrder,
+    convertToGRN
 };

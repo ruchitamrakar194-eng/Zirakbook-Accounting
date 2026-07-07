@@ -341,7 +341,7 @@ const createPOSInvoice = async (req, res) => {
 
             // 3. Post COGS journal entry (Debit COGS / Credit Purchases)
             if (autoCogsEntry && totalCOGS > 0) {
-                const cogsLedger = await resolveLedger('Point Of Sale', 'EXPENSES');
+                const cogsLedger = await resolveLedger('Cost of Goods Sold', 'EXPENSES') || await resolveLedger('COGS', 'EXPENSES');
                 const inventoryAssetLedger = await resolveLedger('Inventory Asset', 'ASSETS') || await resolveLedger('Inventory', 'ASSETS');
                 const purchaseLedger = await resolveLedger('Purchases', 'EXPENSES') || await resolveLedger('Purchase', 'EXPENSES');
 
@@ -388,7 +388,7 @@ const createPOSInvoice = async (req, res) => {
         });
 
         await numberingService.incrementNumber(currentCompanyId, 'posinvoice', resolvedInvoiceNumber);
-        
+
         const { logActivity } = require('../utils/auditLogger');
         logActivity(req, 'CREATE', 'POS', result.id, `POS Invoice #${result.invoiceNumber} created with amount ${result.totalAmount}`);
 
@@ -1178,7 +1178,7 @@ const updatePOSInvoice = async (req, res) => {
 
             // 4. COGS entry
             if (autoCogsEntry && totalCOGS > 0) {
-                const cogsLedger = await resolveLedger('Point Of Sale', 'EXPENSES');
+                const cogsLedger = await resolveLedger('Cost of Goods Sold', 'EXPENSES') || await resolveLedger('COGS', 'EXPENSES');
                 const inventoryAssetLedger = await resolveLedger('Inventory Asset', 'ASSETS') || await resolveLedger('Inventory', 'ASSETS');
                 const purchaseLedger = await resolveLedger('Purchases', 'EXPENSES') || await resolveLedger('Purchase', 'EXPENSES');
 

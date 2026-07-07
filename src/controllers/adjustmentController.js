@@ -1,6 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const numberingService = require('../services/numberingService');
+const { getConversionRate, getCompanyCurrency, getCompanyHistoricalCurrency } = require('../utils/currencyConverter');
 
 const getAdjustments = async (req, res) => {
     try {
@@ -18,7 +19,22 @@ const getAdjustments = async (req, res) => {
             },
             orderBy: { createdAt: 'desc' }
         });
-        res.status(200).json({ success: true, data: adjustments });
+
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const histCurr = await getCompanyHistoricalCurrency(companyId);
+        const readRate = await getConversionRate(histCurr, companyCurrency);
+
+        const mappedAdjustments = adjustments.map(adj => ({
+            ...adj,
+            totalValue: (adj.totalValue || 0) * readRate,
+            inventoryadjustmentitem: (adj.inventoryadjustmentitem || []).map(item => ({
+                ...item,
+                rate: (item.rate || 0) * readRate,
+                amount: (item.amount || 0) * readRate
+            }))
+        }));
+
+        res.status(200).json({ success: true, data: mappedAdjustments });
     } catch (error) {
         console.error('Error fetching adjustments:', error);
         res.status(500).json({ success: false, message: error.message });
@@ -50,7 +66,22 @@ const getAdjustmentById = async (req, res) => {
             }
         });
         if (!adjustment) return res.status(404).json({ success: false, message: 'Adjustment not found' });
-        res.status(200).json({ success: true, data: adjustment });
+
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const histCurr = await getCompanyHistoricalCurrency(companyId);
+        const readRate = await getConversionRate(histCurr, companyCurrency);
+
+        const mappedAdjustment = {
+            ...adjustment,
+            totalValue: (adjustment.totalValue || 0) * readRate,
+            inventoryadjustmentitem: (adjustment.inventoryadjustmentitem || []).map(item => ({
+                ...item,
+                rate: (item.rate || 0) * readRate,
+                amount: (item.amount || 0) * readRate
+            }))
+        };
+
+        res.status(200).json({ success: true, data: mappedAdjustment });
     } catch (error) {
         console.error('Error fetching adjustment:', error);
         res.status(500).json({ success: false, message: error.message });
@@ -82,6 +113,10 @@ const createAdjustment = async (req, res) => {
         }
 
         const result = await prisma.$transaction(async (tx) => {
+            const companyCurrency = await getCompanyCurrency(companyId);
+            const histCurr = await getCompanyHistoricalCurrency(companyId);
+            const writeRate = await getConversionRate(companyCurrency, histCurr);
+
             // 1. Create adjustment record
             // Use the first item's warehouseId if header warehouseId is not provided
             const headerWarehouseId = warehouseId ? parseInt(warehouseId) : parseInt(items[0].warehouseId);
@@ -94,15 +129,15 @@ const createAdjustment = async (req, res) => {
                     type,
                     warehouseId: headerWarehouseId,
                     note,
-                    totalValue: parseFloat(totalValue || 0),
+                    totalValue: parseFloat(totalValue || 0) * writeRate,
                     companyId: parseInt(companyId),
                     inventoryadjustmentitem: {
                         create: items.map(item => ({
                             productId: parseInt(item.productId),
                             warehouseId: parseInt(item.warehouseId || headerWarehouseId),
                             quantity: parseFloat(item.quantity || 0),
-                            rate: parseFloat(item.rate || 0),
-                            amount: parseFloat(item.amount || 0),
+                            rate: parseFloat(item.rate || 0) * writeRate,
+                            amount: parseFloat(item.amount || 0) * writeRate,
                             narration: item.narration
                         }))
                     }
@@ -134,6 +169,27 @@ const createAdjustment = async (req, res) => {
                             userId: req.user?.userId || null
                         }
                     });
+
+                    // Update product WAC properties
+                    const currentProduct = await tx.product.findUnique({
+                        where: { id: productId },
+                        select: { totalQty: true, totalInventoryValue: true, averageCost: true }
+                    });
+                    const currentProductQty = parseFloat(currentProduct?.totalQty || 0);
+                    const currentValue = parseFloat(currentProduct?.totalInventoryValue || 0);
+                    const newTotalQty = currentProductQty + qty;
+                    const newTotalValue = currentValue + (qty * (parseFloat(item.rate || 0) * writeRate));
+                    const newAverageCost = newTotalQty > 0 ? newTotalValue / newTotalQty : parseFloat(currentProduct?.averageCost || 0);
+
+                    await tx.product.update({
+                        where: { id: productId },
+                        data: {
+                            totalQty: newTotalQty,
+                            totalInventoryValue: newTotalValue,
+                            averageCost: newAverageCost
+                        }
+                    });
+
                 } else if (type === 'REMOVE_STOCK') {
                     const currentStock = await tx.stock.findUnique({
                         where: { warehouseId_productId: { warehouseId: whId, productId: productId } }
@@ -157,6 +213,26 @@ const createAdjustment = async (req, res) => {
                             reason: `Adjustment (Remove): ${resolvedVoucherNo}. ${item.narration || ''}`,
                             companyId: parseInt(companyId),
                             userId: req.user?.userId || null
+                        }
+                    });
+
+                    // Update product WAC properties
+                    const currentProduct = await tx.product.findUnique({
+                        where: { id: productId },
+                        select: { totalQty: true, totalInventoryValue: true, averageCost: true, purchasePrice: true, initialCost: true }
+                    });
+                    const currentProductQty = parseFloat(currentProduct?.totalQty || 0);
+                    const averageCost = parseFloat(currentProduct?.averageCost || currentProduct?.purchasePrice || currentProduct?.initialCost || 0);
+                    const wacCOGS = qty * averageCost;
+                    const newTotalQty = Math.max(0, currentProductQty - qty);
+                    const newTotalValue = Math.max(0, parseFloat(currentProduct?.totalInventoryValue || 0) - wacCOGS);
+
+                    await tx.product.update({
+                        where: { id: productId },
+                        data: {
+                            totalQty: newTotalQty,
+                            totalInventoryValue: newTotalValue,
+                            averageCost: newTotalQty > 0 ? newTotalValue / newTotalQty : averageCost
                         }
                     });
                 }
@@ -185,16 +261,14 @@ const createAdjustment = async (req, res) => {
 
             const inventoryAsset = await resolveLedger('Inventory Asset', 'ASSETS');
             const adjExpense = await resolveLedger('Inventory Adjustment Expense', 'EXPENSES');
-            const salesIncome = await resolveLedger('Sales Income', 'INCOME');
-
 
             if (inventoryAsset) {
                 let debitLedgerId, creditLedgerId;
-                const totalAmt = parseFloat(totalValue || 0);
+                const totalAmt = parseFloat(totalValue || 0) * writeRate;
 
-                if (type === 'ADD_STOCK' && salesIncome) {
+                if (type === 'ADD_STOCK' && adjExpense) {
                     debitLedgerId = inventoryAsset.id;
-                    creditLedgerId = salesIncome.id;
+                    creditLedgerId = adjExpense.id;
                 } else if (type === 'REMOVE_STOCK' && adjExpense) {
                     debitLedgerId = adjExpense.id;
                     creditLedgerId = inventoryAsset.id;
@@ -207,7 +281,7 @@ const createAdjustment = async (req, res) => {
                             debitLedgerId,
                             creditLedgerId,
                             amount: totalAmt,
-                             narration: `Inventory Adjustment (${type}): ${resolvedVoucherNo}. ${note || ''}`,
+                            narration: `Inventory Adjustment (${type}): ${resolvedVoucherNo}. ${note || ''}`,
                             voucherType: 'JOURNAL',
                             voucherNumber: resolvedVoucherNo,
                             companyId: parseInt(companyId)
@@ -267,10 +341,50 @@ const deleteAdjustment = async (req, res) => {
                         where: { warehouseId_productId: { warehouseId: whId, productId: productId } },
                         data: { quantity: { decrement: qty } }
                     });
+
+                    // Reverse WAC ADD_STOCK (decrease stock & value)
+                    const currentProduct = await tx.product.findUnique({
+                        where: { id: productId },
+                        select: { totalQty: true, totalInventoryValue: true, averageCost: true }
+                    });
+                    const reversalValue = qty * parseFloat(item.rate || 0);
+                    const newTotalQty = Math.max(0, parseFloat(currentProduct?.totalQty || 0) - qty);
+                    const newTotalValue = Math.max(0, parseFloat(currentProduct?.totalInventoryValue || 0) - reversalValue);
+                    const newAverageCost = newTotalQty > 0 ? newTotalValue / newTotalQty : parseFloat(currentProduct?.averageCost || 0);
+
+                    await tx.product.update({
+                        where: { id: productId },
+                        data: {
+                            totalQty: newTotalQty,
+                            totalInventoryValue: newTotalValue,
+                            averageCost: newAverageCost
+                        }
+                    });
+
                 } else if (adjustment.type === 'REMOVE_STOCK') {
                     await tx.stock.update({
                         where: { warehouseId_productId: { warehouseId: whId, productId: productId } },
                         data: { quantity: { increment: qty } }
+                    });
+
+                    // Reverse WAC REMOVE_STOCK (increase stock & value at average cost)
+                    const currentProduct = await tx.product.findUnique({
+                        where: { id: productId },
+                        select: { totalQty: true, totalInventoryValue: true, averageCost: true, purchasePrice: true, initialCost: true }
+                    });
+                    const averageCost = parseFloat(currentProduct?.averageCost || currentProduct?.purchasePrice || currentProduct?.initialCost || 0);
+                    const restorationValue = qty * averageCost;
+                    const newTotalQty = parseFloat(currentProduct?.totalQty || 0) + qty;
+                    const newTotalValue = parseFloat(currentProduct?.totalInventoryValue || 0) + restorationValue;
+                    const newAverageCost = newTotalQty > 0 ? newTotalValue / newTotalQty : averageCost;
+
+                    await tx.product.update({
+                        where: { id: productId },
+                        data: {
+                            totalQty: newTotalQty,
+                            totalInventoryValue: newTotalValue,
+                            averageCost: newAverageCost
+                        }
                     });
                 }
             }
@@ -340,10 +454,48 @@ const updateAdjustment = async (req, res) => {
                         where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
                         data: { quantity: { decrement: item.quantity } }
                     });
+
+                    const currentProduct = await tx.product.findUnique({
+                        where: { id: item.productId },
+                        select: { totalQty: true, totalInventoryValue: true, averageCost: true }
+                    });
+                    const reversalValue = item.quantity * parseFloat(item.rate || 0);
+                    const newTotalQty = Math.max(0, parseFloat(currentProduct?.totalQty || 0) - item.quantity);
+                    const newTotalValue = Math.max(0, parseFloat(currentProduct?.totalInventoryValue || 0) - reversalValue);
+                    const newAverageCost = newTotalQty > 0 ? newTotalValue / newTotalQty : parseFloat(currentProduct?.averageCost || 0);
+
+                    await tx.product.update({
+                        where: { id: item.productId },
+                        data: {
+                            totalQty: newTotalQty,
+                            totalInventoryValue: newTotalValue,
+                            averageCost: newAverageCost
+                        }
+                    });
+
                 } else if (oldAdj.type === 'REMOVE_STOCK') {
                     await tx.stock.update({
                         where: { warehouseId_productId: { warehouseId: item.warehouseId, productId: item.productId } },
                         data: { quantity: { increment: item.quantity } }
+                    });
+
+                    const currentProduct = await tx.product.findUnique({
+                        where: { id: item.productId },
+                        select: { totalQty: true, totalInventoryValue: true, averageCost: true, purchasePrice: true, initialCost: true }
+                    });
+                    const averageCost = parseFloat(currentProduct?.averageCost || currentProduct?.purchasePrice || currentProduct?.initialCost || 0);
+                    const restorationValue = item.quantity * averageCost;
+                    const newTotalQty = parseFloat(currentProduct?.totalQty || 0) + item.quantity;
+                    const newTotalValue = parseFloat(currentProduct?.totalInventoryValue || 0) + restorationValue;
+                    const newAverageCost = newTotalQty > 0 ? newTotalValue / newTotalQty : averageCost;
+
+                    await tx.product.update({
+                        where: { id: item.productId },
+                        data: {
+                            totalQty: newTotalQty,
+                            totalInventoryValue: newTotalValue,
+                            averageCost: newAverageCost
+                        }
                     });
                 }
             }
@@ -420,6 +572,27 @@ const updateAdjustment = async (req, res) => {
                             userId: req.user?.userId || null
                         }
                     });
+
+                    // Update product WAC properties
+                    const currentProduct = await tx.product.findUnique({
+                        where: { id: productId },
+                        select: { totalQty: true, totalInventoryValue: true, averageCost: true }
+                    });
+                    const currentProductQty = parseFloat(currentProduct?.totalQty || 0);
+                    const currentValue = parseFloat(currentProduct?.totalInventoryValue || 0);
+                    const newTotalQty = currentProductQty + qty;
+                    const newTotalValue = currentValue + (qty * parseFloat(item.rate || 0));
+                    const newAverageCost = newTotalQty > 0 ? newTotalValue / newTotalQty : parseFloat(currentProduct?.averageCost || 0);
+
+                    await tx.product.update({
+                        where: { id: productId },
+                        data: {
+                            totalQty: newTotalQty,
+                            totalInventoryValue: newTotalValue,
+                            averageCost: newAverageCost
+                        }
+                    });
+
                 } else if (type === 'REMOVE_STOCK') {
                     await tx.stock.update({
                         where: { warehouseId_productId: { warehouseId: whId, productId: productId } },
@@ -436,19 +609,58 @@ const updateAdjustment = async (req, res) => {
                             userId: req.user?.userId || null
                         }
                     });
+
+                    // Update product WAC properties
+                    const currentProduct = await tx.product.findUnique({
+                        where: { id: productId },
+                        select: { totalQty: true, totalInventoryValue: true, averageCost: true, purchasePrice: true, initialCost: true }
+                    });
+                    const currentProductQty = parseFloat(currentProduct?.totalQty || 0);
+                    const averageCost = parseFloat(currentProduct?.averageCost || currentProduct?.purchasePrice || currentProduct?.initialCost || 0);
+                    const wacCOGS = qty * averageCost;
+                    const newTotalQty = Math.max(0, currentProductQty - qty);
+                    const newTotalValue = Math.max(0, parseFloat(currentProduct?.totalInventoryValue || 0) - wacCOGS);
+
+                    await tx.product.update({
+                        where: { id: productId },
+                        data: {
+                            totalQty: newTotalQty,
+                            totalInventoryValue: newTotalValue,
+                            averageCost: newTotalQty > 0 ? newTotalValue / newTotalQty : averageCost
+                        }
+                    });
                 }
             }
 
             // 7. Apply NEW Accounting
-            const inventoryAsset = await tx.ledger.findFirst({ where: { companyId: parseInt(companyId), name: 'Inventory Asset' } });
-            const adjExpense = await tx.ledger.findFirst({ where: { companyId: parseInt(companyId), name: 'Inventory Adjustment Expense' } });
-            const salesIncome = await tx.ledger.findFirst({ where: { companyId: parseInt(companyId), name: 'Sales Income' } });
+            const resolveLedger = async (namePattern, type) => {
+                let ledger = await tx.ledger.findFirst({
+                    where: { companyId: parseInt(companyId), name: { contains: namePattern } }
+                });
+                if (!ledger) {
+                    const group = await tx.accountgroup.findFirst({ where: { companyId: parseInt(companyId), type: type } });
+                    if (group) {
+                        ledger = await tx.ledger.create({
+                            data: {
+                                name: namePattern,
+                                groupId: group.id,
+                                companyId: parseInt(companyId),
+                                isControlAccount: true
+                            }
+                        });
+                    }
+                }
+                return ledger;
+            };
+
+            const inventoryAsset = await resolveLedger('Inventory Asset', 'ASSETS');
+            const adjExpense = await resolveLedger('Inventory Adjustment Expense', 'EXPENSES');
 
             if (inventoryAsset) {
                 let debitLedgerId, creditLedgerId;
                 const totalAmt = parseFloat(totalValue || 0);
-                if (type === 'ADD_STOCK' && salesIncome) {
-                    debitLedgerId = inventoryAsset.id; creditLedgerId = salesIncome.id;
+                if (type === 'ADD_STOCK' && adjExpense) {
+                    debitLedgerId = inventoryAsset.id; creditLedgerId = adjExpense.id;
                 } else if (type === 'REMOVE_STOCK' && adjExpense) {
                     debitLedgerId = adjExpense.id; creditLedgerId = inventoryAsset.id;
                 }

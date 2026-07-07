@@ -35,6 +35,7 @@ const salesOrderRoutes = require('./src/routes/salesOrderRoutes');
 const deliveryChallanRoutes = require('./src/routes/deliveryChallanRoutes');
 const salesInvoiceRoutes = require('./src/routes/salesInvoiceRoutes');
 const salesReceiptRoutes = require('./src/routes/salesReceiptRoutes');
+const salespersonRoutes = require('./src/routes/salespersonRoutes');
 const salesReturnRoutes = require('./src/routes/salesReturnRoutes');
 const posRoutes = require('./src/routes/posRoutes');
 const passwordRequestRoutes = require('./src/routes/passwordRequestRoutes');
@@ -54,7 +55,7 @@ const searchRoutes = require('./src/routes/searchRoutes');
 
 const prisma = require('./src/config/prisma');
 
-    // Force Restart Triggered - 6
+// Force Restart Triggered - 6
 const app = express();
 const PORT = process.env.PORT || 8080;
 
@@ -68,12 +69,30 @@ console.log(`Database Host Check: ${process.env.DATABASE_URL ? process.env.DATAB
 prisma.$connect()
     .then(() => {
         console.log('✅ Database connected successfully');
-        fs.writeFileSync('C:\\Users\\kiaan\\.gemini\\antigravity-ide\\scratch\\db_conn.log', 'SUCCESS: Database connected successfully');
+        try {
+            const userProfile = process.env.USERPROFILE || process.env.HOME || 'C:\\Users\\nisha';
+            const logDir = path.join(userProfile, '.gemini', 'antigravity-ide', 'scratch');
+            if (!fs.existsSync(logDir)) {
+                fs.mkdirSync(logDir, { recursive: true });
+            }
+            fs.writeFileSync(path.join(logDir, 'db_conn.log'), 'SUCCESS: Database connected successfully');
+        } catch (e) {
+            console.warn('⚠️ Could not write to db_conn.log:', e.message);
+        }
     })
     .catch((err) => {
         console.error('❌ Database connection failed!');
         console.error(err.message);
-        fs.writeFileSync('C:\\Users\\kiaan\\.gemini\\antigravity-ide\\scratch\\db_conn.log', `FAILED: ${err.message}\n${err.stack}`);
+        try {
+            const userProfile = process.env.USERPROFILE || process.env.HOME || 'C:\\Users\\nisha';
+            const logDir = path.join(userProfile, '.gemini', 'antigravity-ide', 'scratch');
+            if (!fs.existsSync(logDir)) {
+                fs.mkdirSync(logDir, { recursive: true });
+            }
+            fs.writeFileSync(path.join(logDir, 'db_conn.log'), `FAILED: ${err.message}\n${err.stack}`);
+        } catch (e) {
+            console.warn('⚠️ Could not write to db_conn.log:', e.message);
+        }
     });
 
 process.on('uncaughtException', (err) => {
@@ -134,6 +153,7 @@ app.use('/api/sales-orders', salesOrderRoutes);
 app.use('/api/delivery-challans', deliveryChallanRoutes);
 app.use('/api/sales-invoices', salesInvoiceRoutes);
 app.use('/api/sales-receipts', salesReceiptRoutes);
+app.use('/api/salespersons', salespersonRoutes);
 app.use('/api/sales-returns', salesReturnRoutes);
 app.use('/api/pos-invoices', posRoutes);
 app.use('/api/password-requests', passwordRequestRoutes);

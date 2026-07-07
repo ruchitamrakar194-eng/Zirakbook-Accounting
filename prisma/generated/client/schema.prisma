@@ -113,6 +113,7 @@ model company {
   zip                   String?
   country               String?
   currency              String?                 @default("USD")
+  originalCurrency      String?                 @default("USD")
   bankName              String?
   accountHolder         String?
   accountNumber         String?
@@ -179,6 +180,7 @@ model company {
   role                  role[]
   transaction_numbering transaction_numbering[]
   auditlog              auditlog[]
+  salesperson           salesperson[]
 
   @@index([planId], map: "Company_planId_fkey")
 }
@@ -271,15 +273,18 @@ model deliverychallan {
   transportNote       String?                @db.Text
   remarks             String?                @db.Text
   customFields        String?                @db.Text
+  invoiceId           Int?
   company             company                @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "DeliveryChallan_companyId_fkey")
   customer            customer               @relation(fields: [customerId], references: [id], map: "DeliveryChallan_customerId_fkey")
   salesorder          salesorder?            @relation(fields: [salesOrderId], references: [id], map: "DeliveryChallan_salesOrderId_fkey")
+  invoice_for_dc      invoice?               @relation("dc_to_invoice", fields: [invoiceId], references: [id], onDelete: SetNull)
   deliverychallanitem deliverychallanitem[]
   invoice             invoice[]
 
   @@unique([companyId, challanNumber], map: "DeliveryChallan_companyId_challanNumber_key")
   @@index([customerId], map: "DeliveryChallan_customerId_fkey")
   @@index([salesOrderId], map: "DeliveryChallan_salesOrderId_fkey")
+  @@index([invoiceId], map: "DeliveryChallan_invoiceId_fkey")
 }
 
 model deliverychallanitem {
@@ -443,6 +448,7 @@ model inventorytransaction {
 model invoice {
   id                    Int                        @id @default(autoincrement())
   invoiceNumber         String
+  manualReference       String?
   date                  DateTime                   @default(now())
   dueDate               DateTime?
   customerId            Int
@@ -477,10 +483,14 @@ model invoice {
   shippingZipCode       String?
   shippingCountry       String?
   customFields          String?                    @db.Text
+  carNumber             String?
+  salespersonId         Int?
+  salesperson           salesperson?               @relation(fields: [salespersonId], references: [id], onDelete: SetNull, map: "Invoice_salespersonId_fkey")
   company               company                    @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "Invoice_companyId_fkey")
   customer              customer                   @relation(fields: [customerId], references: [id], onDelete: Cascade, map: "Invoice_customerId_fkey")
-  deliverychallan       deliverychallan?           @relation(fields: [deliveryChallanId], references: [id], onDelete: Cascade, map: "Invoice_deliveryChallanId_fkey")
+  deliverychallan       deliverychallan?           @relation(fields: [deliveryChallanId], references: [id], onDelete: SetNull, map: "Invoice_deliveryChallanId_fkey")
   salesorder            salesorder?                @relation(fields: [salesOrderId], references: [id], onDelete: Cascade, map: "Invoice_salesOrderId_fkey")
+  deliverychallans      deliverychallan[]          @relation("dc_to_invoice")
   invoiceitem           invoiceitem[]
   receipt               receipt[]
   salesreturn           salesreturn[]
@@ -488,10 +498,12 @@ model invoice {
   inventory_consumption inventory_consumption[]
   allocations           receiptinvoiceallocation[]
 
-  @@unique([companyId, invoiceNumber], map: "Invoice_companyId_invoiceNumber_key")
+  @@index([companyId], map: "Invoice_companyId_idx")
+  @@index([companyId, invoiceNumber], map: "Invoice_companyId_invoiceNumber_idx")
   @@index([customerId], map: "Invoice_customerId_fkey")
   @@index([deliveryChallanId], map: "Invoice_deliveryChallanId_fkey")
   @@index([salesOrderId], map: "Invoice_salesOrderId_fkey")
+  @@index([salespersonId], map: "Invoice_salespersonId_idx")
 }
 
 model invoiceitem {
@@ -821,6 +833,10 @@ model purchasebill {
   shippingZipCode     String?
   shippingCountry     String?
   customFields        String?                 @db.Text
+  carNumber           String?
+  manualReference     String?
+  salespersonId       Int?
+  salesperson         salesperson?            @relation(fields: [salespersonId], references: [id], onDelete: SetNull, map: "PurchaseBill_salespersonId_fkey")
   payment             payment[]
   company             company                 @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "PurchaseBill_companyId_fkey")
   goodsreceiptnote    goodsreceiptnote?       @relation(fields: [grnId], references: [id], onDelete: Cascade, map: "PurchaseBill_grnId_fkey")
@@ -832,10 +848,12 @@ model purchasebill {
   inventory_batch     inventory_batch[]
   allocations         paymentbillallocation[]
 
-  @@unique([companyId, billNumber], map: "PurchaseBill_companyId_billNumber_key")
+  @@index([companyId], map: "PurchaseBill_companyId_idx")
+  @@index([companyId, billNumber], map: "PurchaseBill_companyId_billNumber_idx")
   @@index([grnId], map: "PurchaseBill_grnId_fkey")
   @@index([purchaseOrderId], map: "PurchaseBill_purchaseOrderId_fkey")
   @@index([vendorId], map: "PurchaseBill_vendorId_fkey")
+  @@index([salespersonId], map: "PurchaseBill_salespersonId_idx")
 }
 
 model purchasebillitem {
@@ -866,6 +884,7 @@ model purchasebillitem {
 model purchaseorder {
   id                  Int                  @id @default(autoincrement())
   orderNumber         String
+  manualReference     String?
   date                DateTime             @default(now())
   expectedDate        DateTime?
   vendorId            Int
@@ -893,6 +912,7 @@ model purchaseorder {
   shippingZipCode     String?
   shippingCountry     String?
   customFields        String?              @db.Text
+  terms               String?              @db.Text
   createdAt           DateTime             @default(now())
   updatedAt           DateTime             @default(now()) @updatedAt
   goodsreceiptnote    goodsreceiptnote[]
@@ -1064,6 +1084,7 @@ model receipt {
 model salesorder {
   id                  Int               @id @default(autoincrement())
   orderNumber         String
+  manualReference     String?
   date                DateTime          @default(now())
   expectedDate        DateTime?
   customerId          Int
@@ -1095,6 +1116,7 @@ model salesorder {
   shippingZipCode     String?
   shippingCountry     String?
   customFields        String?           @db.Text
+  terms               String?           @db.Text
   company             company           @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "SalesOrder_companyId_fkey")
   customer            customer          @relation(fields: [customerId], references: [id], map: "SalesOrder_customerId_fkey")
   salesquotation      salesquotation?   @relation(fields: [quotationId], references: [id], map: "SalesOrder_quotationId_fkey")
@@ -1135,6 +1157,7 @@ model salesorderitem {
 model salesquotation {
   id                  Int                   @id @default(autoincrement())
   quotationNumber     String
+  manualReference     String?
   date                DateTime              @default(now())
   expiryDate          DateTime?
   customerId          Int
@@ -1162,6 +1185,7 @@ model salesquotation {
   shippingState       String?
   shippingZipCode     String?
   customFields        String?               @db.Text
+  terms               String?               @db.Text
   company             company               @relation(fields: [companyId], references: [id], onDelete: Cascade, map: "SalesQuotation_companyId_fkey")
   customer            customer              @relation(fields: [customerId], references: [id], map: "SalesQuotation_customerId_fkey")
   salesquotationitem  salesquotationitem[]
@@ -1623,6 +1647,7 @@ enum deliverychallan_status {
   PENDING
   DELIVERED
   CANCELLED
+  CONVERTED
 }
 
 enum purchasereturn_status {
@@ -1638,6 +1663,7 @@ enum purchasequotation_status {
   ACCEPTED
   DECLINED
   EXPIRED
+  CONVERTED
 }
 
 enum salesquotation_status {
@@ -1646,6 +1672,7 @@ enum salesquotation_status {
   ACCEPTED
   DECLINED
   EXPIRED
+  CONVERTED
 }
 
 enum purchaseorder_status {
@@ -1653,6 +1680,7 @@ enum purchaseorder_status {
   PARTIAL
   COMPLETED
   CANCELLED
+  CONVERTED
 }
 
 enum salesorder_status {
@@ -1660,6 +1688,7 @@ enum salesorder_status {
   PARTIAL
   COMPLETED
   CANCELLED
+  CONVERTED
 }
 
 enum invoice_status {
@@ -1667,6 +1696,7 @@ enum invoice_status {
   PARTIAL
   PAID
   CANCELLED
+  COMPLETED
 }
 
 enum purchasebill_status {
@@ -1674,6 +1704,7 @@ enum purchasebill_status {
   PARTIAL
   PAID
   CANCELLED
+  COMPLETED
 }
 
 enum salesreturn_status {
@@ -1886,4 +1917,17 @@ model auditlog {
 
   @@index([companyId])
   @@index([userId])
+}
+
+model salesperson {
+  id           Int            @id @default(autoincrement())
+  name         String
+  phone        String?
+  email        String?
+  companyId    Int
+  company      company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  invoices     invoice[]
+  purchasebill purchasebill[]
+
+  @@index([companyId])
 }

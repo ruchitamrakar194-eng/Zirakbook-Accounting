@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { getConversionRate, getCompanyCurrency, getCompanyHistoricalCurrency } = require('../utils/currencyConverter');
 
 // Super Admin Dashboard Stats
 const getSuperAdminDashboardStats = async (req, res) => {
@@ -111,17 +112,21 @@ const getCompanyDashboardStats = async (req, res) => {
             }
         });
 
+        const companyCurrency = await getCompanyCurrency(compId);
+        const histCurr = await getCompanyHistoricalCurrency(compId);
+        const rate = await getConversionRate(histCurr, companyCurrency);
+
         let totalRevenue = 0;
         let totalExpenses = 0;
 
         ledgers.forEach(l => {
-            const openBal = parseFloat(l.openingBalance || 0);
+            const openBal = parseFloat(l.openingBalance || 0) * rate;
             if (l.accountgroup.type === 'INCOME') totalRevenue += openBal;
             if (l.accountgroup.type === 'EXPENSES') totalExpenses += openBal;
         });
 
         allTransactions.forEach(txn => {
-            const amount = txn.amount || 0;
+            const amount = (txn.amount || 0) * rate;
             const debitLedger = ledgers.find(l => l.id === txn.debitLedgerId);
             const creditLedger = ledgers.find(l => l.id === txn.creditLedgerId);
 

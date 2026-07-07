@@ -20,13 +20,28 @@ const createVoucher = async (req, res) => {
             items,
             notes,
             signature,
-            customFields
+            customFields,
+            manualReceiptNo,
+            allowDuplicateManualNo
         } = req.body;
 
-        const companyId = req.body.companyId || req.user?.companyId;
+        const companyId = req.user?.companyId || req.query.companyId || req.body.companyId;
 
         if (!companyId) {
             return res.status(400).json({ success: false, message: 'Company ID is required' });
+        }
+
+        if (manualReceiptNo && !(allowDuplicateManualNo === true || allowDuplicateManualNo === 'true')) {
+            const existingManual = await prisma.voucher.findFirst({
+                where: { companyId: parseInt(companyId), manualVoucherNo: manualReceiptNo }
+            });
+            if (existingManual) {
+                return res.status(400).json({
+                    success: false,
+                    isDuplicateWarning: true,
+                    message: `Manual voucher number '${manualReceiptNo}' already exists. Do you want to use this duplicate number?`
+                });
+            }
         }
 
         let resolvedVoucherNumber = voucherNumber;
@@ -58,6 +73,7 @@ const createVoucher = async (req, res) => {
             const je = await prisma.journalentry.create({
                 data: {
                     voucherNumber: resolvedVoucherNumber,
+                    manualVoucherNo: manualReceiptNo,
                     date: date ? new Date(date) : new Date(),
                     narration: notes,
                     companyId: parseInt(companyId),
@@ -139,6 +155,7 @@ const createVoucher = async (req, res) => {
                 data: {
                     customFields: req.body.customFields ? (typeof req.body.customFields === 'string' ? req.body.customFields : JSON.stringify(req.body.customFields)) : null,
                     voucherNumber: resolvedVoucherNumber,
+                    manualVoucherNo: manualReceiptNo,
                     voucherType: 'JOURNAL',
                     date: date ? new Date(date) : new Date(),
                     companyId: parseInt(companyId),
@@ -224,6 +241,7 @@ const createVoucher = async (req, res) => {
             data: {
                 customFields: customFields ? (typeof customFields === 'string' ? customFields : JSON.stringify(customFields)) : null,
                 voucherNumber: resolvedVoucherNumber,
+                manualVoucherNo: manualReceiptNo,
                 voucherType: voucherType.toUpperCase(),
                 date: date ? new Date(date) : new Date(),
                 companyId: parseInt(companyId),
@@ -442,6 +460,25 @@ const updateVoucher = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Voucher not found' });
         }
 
+        const { manualReceiptNo, allowDuplicateManualNo } = req.body;
+
+        if (manualReceiptNo && !(allowDuplicateManualNo === true || allowDuplicateManualNo === 'true')) {
+            const existingManual = await prisma.voucher.findFirst({
+                where: {
+                    companyId: parseInt(companyId),
+                    manualVoucherNo: manualReceiptNo,
+                    id: { not: parseInt(id) }
+                }
+            });
+            if (existingManual) {
+                return res.status(400).json({
+                    success: false,
+                    isDuplicateWarning: true,
+                    message: `Manual voucher number '${manualReceiptNo}' already exists. Do you want to use this duplicate number?`
+                });
+            }
+        }
+
         if (req.body.isJournal) {
             const { journalRows, voucherNumber, date, notes, logo, signature } = req.body;
 
@@ -519,6 +556,7 @@ const updateVoucher = async (req, res) => {
                 const newJE = await tx.journalentry.create({
                     data: {
                         voucherNumber,
+                        manualVoucherNo: manualReceiptNo,
                         date: date ? new Date(date) : new Date(),
                         narration: notes,
                         companyId: parseInt(companyId),
@@ -593,6 +631,7 @@ const updateVoucher = async (req, res) => {
                     data: {
                         customFields: req.body.customFields !== undefined ? (typeof req.body.customFields === 'string' ? req.body.customFields : JSON.stringify(req.body.customFields)) : undefined,
                         voucherNumber,
+                        manualVoucherNo: manualReceiptNo,
                         voucherType: 'JOURNAL',
                         date: date ? new Date(date) : new Date(),
                         notes: notes || '',
@@ -643,7 +682,8 @@ const updateVoucher = async (req, res) => {
                 items,
                 notes,
                 signature,
-                customFields
+                customFields,
+                manualReceiptNo: regularManualReceiptNo
             } = req.body;
 
             const subtotal = items.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0);
@@ -712,6 +752,7 @@ const updateVoucher = async (req, res) => {
                     data: {
                         customFields: customFields !== undefined ? (typeof customFields === 'string' ? customFields : JSON.stringify(customFields)) : undefined,
                         voucherNumber,
+                        manualVoucherNo: manualReceiptNo || regularManualReceiptNo,
                         voucherType: voucherType ? voucherType.toUpperCase() : undefined,
                         date: date ? new Date(date) : undefined,
                         companyName,

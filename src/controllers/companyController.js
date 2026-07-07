@@ -43,7 +43,9 @@ const createCompany = async (req, res) => {
                     endDate: endDate ? new Date(endDate) : null,
                     planId: planId ? parseInt(planId) : null,
                     planType,
-                    logo: logoUrl
+                    logo: logoUrl,
+                    currency: currency || 'USD',
+                    originalCurrency: currency || 'USD'
                 }
             });
 

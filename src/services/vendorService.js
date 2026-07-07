@@ -1,4 +1,5 @@
 const prisma = require('../config/prisma');
+const { getConversionRate, getCompanyCurrency, getCompanyHistoricalCurrency } = require('../utils/currencyConverter');
 
 // Create Vendor with Auto-Ledger Creation
 const createVendor = async (data) => {
@@ -44,6 +45,45 @@ const createVendor = async (data) => {
                     vendorId: vendor.id
                 }
             });
+
+            const openingBal = parseFloat(data.openingBalance || 0);
+            if (openingBal !== 0) {
+                let obeLedger = await tx.ledger.findFirst({
+                    where: { companyId: data.companyId, name: 'Opening Balance Equity' }
+                });
+
+                if (!obeLedger) {
+                    const equityGroup = await tx.accountgroup.findFirst({
+                        where: { companyId: data.companyId, type: 'EQUITY' }
+                    });
+                    if (equityGroup) {
+                        obeLedger = await tx.ledger.create({
+                            data: {
+                                name: 'Opening Balance Equity',
+                                groupId: equityGroup.id,
+                                companyId: data.companyId,
+                                isControlAccount: true
+                            }
+                        });
+                    }
+                }
+
+                if (obeLedger) {
+                    const isDrNormal = ['ASSETS', 'EXPENSES'].includes(accountsPayableSubGroup.group?.type || 'ASSETS');
+                    await tx.transaction.create({
+                        data: {
+                            date: new Date(),
+                            amount: Math.abs(openingBal),
+                            debitLedgerId: isDrNormal ? ledger.id : obeLedger.id,
+                            creditLedgerId: isDrNormal ? obeLedger.id : ledger.id,
+                            voucherType: 'JOURNAL',
+                            voucherNumber: `OB-${ledger.id}`,
+                            narration: `Opening Balance for ${ledger.name}`,
+                            companyId: data.companyId
+                        }
+                    });
+                }
+            }
 
             // Update vendor with ledger ID
             const updatedVendor = await tx.vendor.update({
@@ -91,7 +131,23 @@ const getVendors = async (companyId) => {
             orderBy: { createdAt: 'desc' }
         });
 
-        return vendors;
+        const companyCurrency = await getCompanyCurrency(companyId);
+        const histCurr = await getCompanyHistoricalCurrency(companyId);
+        const rate = await getConversionRate(histCurr, companyCurrency);
+
+        return vendors.map(v => {
+            if (v.ledger) {
+                v.ledger.currentBalance = (v.ledger.currentBalance || 0) * rate;
+            }
+            if (v.purchaseBills) {
+                v.purchaseBills = v.purchaseBills.map(b => ({
+                    ...b,
+                    totalAmount: (b.totalAmount || 0) * rate,
+                    balanceAmount: (b.balanceAmount || 0) * rate
+                }));
+            }
+            return v;
+        });
     } catch (error) {
         console.error('Error fetching vendors:', error);
         throw error;
@@ -124,6 +180,23 @@ const getVendorById = async (id, companyId) => {
                 }
             }
         });
+
+        if (vendor) {
+            const companyCurrency = await getCompanyCurrency(companyId);
+            const histCurr = await getCompanyHistoricalCurrency(companyId);
+            const rate = await getConversionRate(histCurr, companyCurrency);
+
+            if (vendor.ledger) {
+                vendor.ledger.currentBalance = (vendor.ledger.currentBalance || 0) * rate;
+            }
+            if (vendor.purchaseBills) {
+                vendor.purchaseBills = vendor.purchaseBills.map(b => ({
+                    ...b,
+                    totalAmount: (b.totalAmount || 0) * rate,
+                    balanceAmount: (b.balanceAmount || 0) * rate
+                }));
+            }
+        }
 
         return vendor;
     } catch (error) {

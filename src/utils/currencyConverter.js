@@ -1,0 +1,271 @@
+const prisma = require('../config/prisma');
+const https = require('https');
+
+let cachedRates = null;
+let lastFetched = 0;
+
+const FALLBACK_RATES = {
+    "USD": 1,
+    "AED": 3.6725,
+    "AFN": 64.79381,
+    "ALL": 82.535653,
+    "AMD": 367.924857,
+    "ANG": 1.79,
+    "AOA": 923.173024,
+    "ARS": 1487.769,
+    "AUD": 1.4510184,
+    "AWG": 1.79,
+    "AZN": 1.69985,
+    "BAM": 1.717864,
+    "BBD": 2,
+    "BDT": 123.170395,
+    "BGN": 1.717864,
+    "BHD": 0.376,
+    "BIF": 2982.712888,
+    "BMD": 1,
+    "BND": 1.295968,
+    "BOB": 6.927967,
+    "BRL": 5.174794,
+    "BSD": 1,
+    "BTN": 95.240181,
+    "BWP": 14.320883,
+    "BYN": 2.911522,
+    "BZD": 2,
+    "CAD": 1.421403,
+    "CDF": 2293.28985,
+    "CHF": 0.809555,
+    "CLF": 0.023334,
+    "CLP": 922.304627,
+    "CNH": 6.793898,
+    "CNY": 6.801054,
+    "COP": 3401.617171,
+    "CRC": 455.276671,
+    "CUP": 24,
+    "CVE": 96.849074,
+    "CZK": 21.289715,
+    "DJF": 177.721,
+    "DKK": 6.555759,
+    "DOP": 59.435173,
+    "DZD": 133.227357,
+    "EGP": 49.11596,
+    "ERN": 15,
+    "ETB": 159.64811,
+    "EUR": 0.878331,
+    "FJD": 2.247129,
+    "FKP": 0.753734,
+    "FOK": 6.555666,
+    "GBP": 0.753734,
+    "GEL": 2.639807,
+    "GGP": 0.753734,
+    "GHS": 11.343333,
+    "GIP": 0.753734,
+    "GMD": 74.318015,
+    "GNF": 8775.095345,
+    "GTQ": 7.625584,
+    "GYD": 209.217419,
+    "HKD": 7.843885,
+    "HNL": 26.749819,
+    "HRK": 6.617779,
+    "HTG": 130.797661,
+    "HUF": 312.406234,
+    "IDR": 17969.280549,
+    "ILS": 2.983392,
+    "IMP": 0.753734,
+    "INR": 95.240603,
+    "IQD": 1310.362364,
+    "IRR": 1293973.474969,
+    "ISK": 126.194184,
+    "JEP": 0.753734,
+    "JMD": 157.558732,
+    "JOD": 0.709,
+    "JPY": 162.547842,
+    "KES": 129.305104,
+    "KGS": 87.46622,
+    "KHR": 4036.519148,
+    "KID": 1.451013,
+    "KMF": 432.110108,
+    "KRW": 1553.236507,
+    "KWD": 0.309391,
+    "KYD": 0.833333,
+    "KZT": 479.272246,
+    "LAK": 22318.589238,
+    "LBP": 89500,
+    "LKR": 335.936926,
+    "LRD": 181.321119,
+    "LSL": 16.411676,
+    "LYD": 6.412116,
+    "MAD": 9.401708,
+    "MDL": 17.645087,
+    "MGA": 4261.020519,
+    "MKD": 54.111715,
+    "MMK": 2098.220888,
+    "MNT": 3601.966822,
+    "MOP": 8.079231,
+    "MRU": 39.927561,
+    "MUR": 47.138012,
+    "MVR": 15.451124,
+    "MWK": 1738.594018,
+    "MXN": 17.544815,
+    "MYR": 4.092411,
+    "MZN": 63.65717,
+    "NAD": 16.411676,
+    "NGN": 1375.72838,
+    "NIO": 36.798016,
+    "NOK": 9.915835,
+    "NPR": 152.38429,
+    "NZD": 1.762131,
+    "OMR": 0.384497,
+    "PAB": 1,
+    "PEN": 3.414817,
+    "PGK": 4.390416,
+    "PHP": 61.669103,
+    "PKR": 278.011949,
+    "PLN": 3.771022,
+    "PYG": 6067.58916,
+    "QAR": 3.64,
+    "RON": 4.59344,
+    "RSD": 102.991073,
+    "RUB": 77.899758,
+    "RWF": 1468.139572,
+    "SAR": 3.75,
+    "SBD": 7.994748,
+    "SCR": 14.386346,
+    "SDG": 544.065205,
+    "SEK": 9.730741,
+    "SGD": 1.295946,
+    "SHP": 0.753734,
+    "SLE": 24.35505,
+    "SLL": 24355.050083,
+    "SOS": 571.513243,
+    "SRD": 37.614726,
+    "SSP": 4708.732582,
+    "STN": 21.519089,
+    "SYP": 113.511592,
+    "SZL": 16.411676,
+    "THB": 33.329607,
+    "TJS": 9.262561,
+    "TMT": 3.500129,
+    "TND": 2.949847,
+    "TOP": 2.387897,
+    "TRY": 46.70879,
+    "TTD": 6.765077,
+    "TVD": 1.451013,
+    "TWD": 31.915739,
+    "TZS": 2623.763499,
+    "UAH": 44.756702,
+    "UGX": 3658.609062,
+    "UYU": 40.155265,
+    "UZS": 11939.798606,
+    "VES": 639.7029,
+    "VND": 26251.146529,
+    "VUV": 120.33996,
+    "WST": 2.74202,
+    "XAF": 576.146811,
+    "XCD": 2.7,
+    "XCG": 1.79,
+    "XDR": 0.737285,
+    "XOF": 576.146811,
+    "XPF": 104.812894,
+    "YER": 238.541361,
+    "ZAR": 16.411682,
+    "ZMW": 18.192176,
+    "ZWG": 26.8699,
+    "ZWL": 26.8699
+};
+
+const getExchangeRates = () => {
+    return new Promise((resolve) => {
+        const now = Date.now();
+        if (cachedRates && (now - lastFetched < 3600000)) {
+            return resolve(cachedRates);
+        }
+        
+        // Try first API
+        https.get('https://open.er-api.com/v6/latest/USD', (res) => {
+            let body = '';
+            res.on('data', (chunk) => { body += chunk; });
+            res.on('end', () => {
+                try {
+                    const data = JSON.parse(body);
+                    if (data && data.rates) {
+                        cachedRates = data.rates;
+                        lastFetched = now;
+                        return resolve(cachedRates);
+                    }
+                } catch (e) {}
+                tryAlternative();
+            });
+        }).on('error', () => {
+            tryAlternative();
+        });
+
+        function tryAlternative() {
+            https.get('https://api.exchangerate-api.com/v4/latest/USD', (res) => {
+                let body = '';
+                res.on('data', (chunk) => { body += chunk; });
+                res.on('end', () => {
+                    try {
+                        const data = JSON.parse(body);
+                        if (data && data.rates) {
+                            cachedRates = data.rates;
+                            lastFetched = now;
+                            return resolve(cachedRates);
+                        }
+                    } catch (e) {}
+                    resolve(FALLBACK_RATES);
+                });
+            }).on('error', () => {
+                resolve(FALLBACK_RATES);
+            });
+        }
+    });
+};
+
+/**
+ * Get conversion rate from one currency to another
+ */
+const getConversionRate = async (from, to) => {
+    const rates = await getExchangeRates();
+    const fromUpper = (from || 'USD').toUpperCase();
+    const toUpper = (to || 'USD').toUpperCase();
+    const fromRate = rates[fromUpper] || FALLBACK_RATES[fromUpper] || 1.0;
+    const toRate = rates[toUpper] || FALLBACK_RATES[toUpper] || 1.0;
+    // from -> USD -> to
+    return toRate / fromRate;
+};
+
+/**
+ * Get the current company currency
+ */
+const getCompanyCurrency = async (companyId) => {
+    try {
+        const company = await prisma.company.findUnique({
+            where: { id: parseInt(companyId) },
+            select: { currency: true }
+        });
+        return company?.currency || 'USD';
+    } catch (e) {
+        console.error('Error fetching company currency:', e.message);
+        return 'USD';
+    }
+};
+
+const getCompanyHistoricalCurrency = async (companyId) => {
+    try {
+        const company = await prisma.company.findUnique({
+            where: { id: parseInt(companyId) },
+            select: { originalCurrency: true, currency: true }
+        });
+        return company?.originalCurrency || company?.currency || 'KWD';
+    } catch (e) {
+        console.error('Error fetching company historical currency:', e.message);
+        return 'KWD';
+    }
+};
+
+module.exports = {
+    getExchangeRates,
+    getConversionRate,
+    getCompanyCurrency,
+    getCompanyHistoricalCurrency
+};
