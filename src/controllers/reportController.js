@@ -758,9 +758,11 @@ const getInventorySummary = async (req, res) => {
                 productId: stk.productId,
                 productName: stk.product.name,
                 sku: stk.product.sku || 'N/A',
+                category: stk.product.category?.name || 'Uncategorized',
                 warehouseId: stk.warehouseId,
                 warehouse: stk.warehouse.name,
-                price: (stk.product.salePrice || 0) * rate,
+                price: (stk.product.salePrice || 0) * rate, // Sale Price
+                costPrice: (stk.product.averageCost || stk.product.purchasePrice || stk.product.initialCost || 0) * rate, // Cost Price
                 closing: stk.quantity, // starts as current stock, will adjust if date filter is set
                 opening: 0,
                 inward: 0,
@@ -821,7 +823,11 @@ const getInventorySummary = async (req, res) => {
         // Now Calculate Opening: Opening = Closing - Inward + Outward
         Object.values(reportMap).forEach(item => {
             item.opening = item.closing - item.inward + item.outward;
-            item.totalValue = item.closing * item.price;
+            item.openingValue = item.opening * item.costPrice;
+            item.inwardValue = item.inward * item.costPrice;
+            item.outwardValue = item.outward * item.costPrice;
+            item.totalValue = item.closing * item.costPrice; // cost-based valuation
+            item.salesValue = item.closing * item.price; // salePrice-based valuation
 
             if (item.closing <= 0) item.status = 'Out of Stock';
             else if (item.closing < 10) item.status = 'Low Stock';

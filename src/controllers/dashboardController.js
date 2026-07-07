@@ -181,7 +181,7 @@ const getCompanyDashboardStats = async (req, res) => {
             id: tx.id,
             date: tx.date,
             description: tx.narration,
-            amount: tx.amount,
+            amount: (tx.amount || 0) * rate,
             type: tx.voucherType,
             status: 'Completed'
         }));
@@ -204,7 +204,7 @@ const getCompanyDashboardStats = async (req, res) => {
 
         yearTransactions.forEach(txn => {
             const m = new Date(txn.date).getMonth();
-            const amount = txn.amount || 0;
+            const amount = (txn.amount || 0) * rate;
             const debitLedger = ledgers.find(l => l.id === txn.debitLedgerId);
             const creditLedger = ledgers.find(l => l.id === txn.creditLedgerId);
 

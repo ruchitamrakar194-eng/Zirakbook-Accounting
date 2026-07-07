@@ -731,6 +731,13 @@ const getLedgerTransactions = async (ledgerId, companyId) => {
                                     select: { id: true, name: true }
                                 }
                             }
+                        },
+                        allocations: {
+                            include: {
+                                receipt: {
+                                    select: { id: true, receiptNumber: true, date: true, amount: true }
+                                }
+                            }
                         }
                     }
                 },
@@ -748,6 +755,13 @@ const getLedgerTransactions = async (ledgerId, companyId) => {
                                     select: { id: true, name: true }
                                 }
                             }
+                        },
+                        allocations: {
+                            include: {
+                                payment: {
+                                    select: { id: true, paymentNumber: true, date: true, amount: true }
+                                }
+                            }
                         }
                     }
                 },
@@ -755,6 +769,13 @@ const getLedgerTransactions = async (ledgerId, companyId) => {
                     include: {
                         customer: {
                             select: { id: true, name: true, nameArabic: true, phone: true, email: true }
+                        },
+                        allocations: {
+                            include: {
+                                invoice: {
+                                    select: { id: true, invoiceNumber: true, date: true, totalAmount: true }
+                                }
+                            }
                         }
                     }
                 },
@@ -762,6 +783,13 @@ const getLedgerTransactions = async (ledgerId, companyId) => {
                     include: {
                         vendor: {
                             select: { id: true, name: true, nameArabic: true, phone: true, email: true }
+                        },
+                        allocations: {
+                            include: {
+                                purchasebill: {
+                                    select: { id: true, billNumber: true, date: true, totalAmount: true }
+                                }
+                            }
                         }
                     }
                 },
@@ -782,7 +810,16 @@ const getLedgerTransactions = async (ledgerId, companyId) => {
                         }
                     }
                 },
-                journalentry: true
+                journalentry: {
+                    include: {
+                        transaction: {
+                            include: {
+                                ledger_transaction_debitLedgerIdToledger: true,
+                                ledger_transaction_creditLedgerIdToledger: true
+                            }
+                        }
+                    }
+                }
             },
             orderBy: { date: 'desc' }
         });

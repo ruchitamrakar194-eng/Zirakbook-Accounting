@@ -1510,7 +1510,7 @@ const config = {
       "value": "prisma-client-js"
     },
     "output": {
-      "value": "C:\\Users\\kiaan\\Desktop\\Kiaan\\ZirakBook Accounting New Latest\\Backend-Zirakbook\\prisma\\generated\\client",
+      "value": "C:\\Users\\kiaan\\Desktop\\Kiaan\\JirakBook-main\\Backend Today\\prisma\\generated\\client",
       "fromEnvVar": null
     },
     "config": {
@@ -1528,7 +1528,7 @@ const config = {
       }
     ],
     "previewFeatures": [],
-    "sourceFilePath": "C:\\Users\\kiaan\\Desktop\\Kiaan\\ZirakBook Accounting New Latest\\Backend-Zirakbook\\prisma\\schema.prisma",
+    "sourceFilePath": "C:\\Users\\kiaan\\Desktop\\Kiaan\\JirakBook-main\\Backend Today\\prisma\\schema.prisma",
     "isCustomOutput": true
   },
   "relativeEnvPaths": {
@@ -1542,7 +1542,6 @@ const config = {
     "db"
   ],
   "activeProvider": "mysql",
-  "postinstall": false,
   "inlineDatasources": {
     "db": {
       "url": {
