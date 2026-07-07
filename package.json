@@ -4,7 +4,6 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    // "start": "npx prisma migrate deploy && node server.js",
     "start": "npx prisma migrate resolve --rolled-back 20260307085000_add_missing_fields_to_planrequest && npx prisma migrate deploy && node server.js",
     "dev": "nodemon server.js",
     "build": "npx prisma generate",
