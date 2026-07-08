@@ -569,14 +569,16 @@ const getBills = async (req, res) => {
                 },
                 payment: {
                     include: {
-                        bankLedger: { select: { id: true, name: true } }
+                        bankLedger: { select: { id: true, name: true } },
+                        transaction: true
                     }
                 },
                 allocations: {
                     include: {
                         payment: {
                             include: {
-                                bankLedger: { select: { id: true, name: true } }
+                                bankLedger: { select: { id: true, name: true } },
+                                transaction: true
                             }
                         }
                     }
@@ -588,17 +590,29 @@ const getBills = async (req, res) => {
         // Map allocations to payment list to maintain compatibility and show correct allocated amount
         const mappedBills = bills.map(bill => {
             const mappedPayments = [
-                ...bill.payment.map(p => ({ ...p })),
-                ...bill.allocations.map(alloc => ({
-                    id: alloc.payment.id,
-                    paymentNumber: alloc.payment.paymentNumber,
-                    date: alloc.payment.date,
-                    amount: alloc.amount, // Only the allocated amount
-                    paymentMode: alloc.payment.paymentMode,
-                    referenceNumber: alloc.payment.referenceNumber,
-                    bankLedger: alloc.payment.bankLedger,
-                    notes: alloc.payment.notes
-                }))
+                ...bill.payment.map(p => {
+                    const baseAmount = p.transaction?.filter(t => t.creditLedgerId === p.cashBankAccountId).reduce((sum, t) => sum + t.amount, 0) || p.amount;
+                    return {
+                        ...p,
+                        baseAmount
+                    };
+                }),
+                ...bill.allocations.map(alloc => {
+                    const p = alloc.payment;
+                    const baseAmount = p.transaction?.filter(t => t.creditLedgerId === p.cashBankAccountId).reduce((sum, t) => sum + t.amount, 0) || p.amount;
+                    const baseAllocAmount = p.amount > 0 ? alloc.amount * (baseAmount / p.amount) : alloc.amount;
+                    return {
+                        id: p.id,
+                        paymentNumber: p.paymentNumber,
+                        date: p.date,
+                        amount: alloc.amount, // Only the allocated amount
+                        baseAmount: baseAllocAmount,
+                        paymentMode: p.paymentMode,
+                        referenceNumber: p.referenceNumber,
+                        bankLedger: p.bankLedger,
+                        notes: p.notes
+                    };
+                })
             ];
 
             const seenIds = new Set();
@@ -647,14 +661,16 @@ const getBillById = async (req, res) => {
                 },
                 payment: {
                     include: {
-                        bankLedger: true
+                        bankLedger: true,
+                        transaction: true
                     }
                 },
                 allocations: {
                     include: {
                         payment: {
                             include: {
-                                bankLedger: true
+                                bankLedger: true,
+                                transaction: true
                             }
                         }
                     }
@@ -665,17 +681,29 @@ const getBillById = async (req, res) => {
 
         // Map allocations to payment list to maintain compatibility and show correct allocated amount
         const mappedPayments = [
-            ...bill.payment.map(p => ({ ...p })),
-            ...bill.allocations.map(alloc => ({
-                id: alloc.payment.id,
-                paymentNumber: alloc.payment.paymentNumber,
-                date: alloc.payment.date,
-                amount: alloc.amount, // Only the allocated amount
-                paymentMode: alloc.payment.paymentMode,
-                referenceNumber: alloc.payment.referenceNumber,
-                bankLedger: alloc.payment.bankLedger,
-                notes: alloc.payment.notes
-            }))
+            ...bill.payment.map(p => {
+                const baseAmount = p.transaction?.filter(t => t.creditLedgerId === p.cashBankAccountId).reduce((sum, t) => sum + t.amount, 0) || p.amount;
+                return {
+                    ...p,
+                    baseAmount
+                };
+            }),
+            ...bill.allocations.map(alloc => {
+                const p = alloc.payment;
+                const baseAmount = p.transaction?.filter(t => t.creditLedgerId === p.cashBankAccountId).reduce((sum, t) => sum + t.amount, 0) || p.amount;
+                const baseAllocAmount = p.amount > 0 ? alloc.amount * (baseAmount / p.amount) : alloc.amount;
+                return {
+                    id: p.id,
+                    paymentNumber: p.paymentNumber,
+                    date: p.date,
+                    amount: alloc.amount, // Only the allocated amount
+                    baseAmount: baseAllocAmount,
+                    paymentMode: p.paymentMode,
+                    referenceNumber: p.referenceNumber,
+                    bankLedger: p.bankLedger,
+                    notes: p.notes
+                };
+            })
         ];
 
         const seenIds = new Set();
