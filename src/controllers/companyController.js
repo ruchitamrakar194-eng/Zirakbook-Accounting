@@ -7,7 +7,7 @@ const { isCloudinaryConfigured } = require('../utils/cloudinaryConfig');
 
 const createCompany = async (req, res) => {
     try {
-        const { name, email, phone, address, startDate, endDate, planId, planType, password } = req.body;
+        const { name, email, phone, address, startDate, endDate, planId, planType, password, currency } = req.body;
 
         let logoUrl = null;
         if (req.file) {

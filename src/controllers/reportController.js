@@ -1872,12 +1872,12 @@ const getAllTransactions = async (req, res) => {
             include: {
                 ledger_transaction_debitLedgerIdToledger: { include: { accountgroup: true } },
                 ledger_transaction_creditLedgerIdToledger: { include: { accountgroup: true } },
-                invoice: { include: { customer: true } },
-                purchasebill: { include: { vendor: true } },
+                invoice: { include: { customer: true, invoiceitem: { include: { product: true, warehouse: true, uom: true } } } },
+                purchasebill: { include: { vendor: true, purchasebillitem: { include: { product: true, warehouse: true, uom: true } } } },
                 payment: { include: { vendor: true, bankLedger: true } },
                 receipt: { include: { customer: true, cashBankAccount: true } },
                 journalentry: true,
-                posinvoice: { include: { customer: true } }
+                posinvoice: { include: { customer: true, posinvoiceitem: { include: { product: true, warehouse: true, uom: true } } } }
             },
             orderBy: {
                 date: 'desc'
@@ -2089,6 +2089,110 @@ const getAllTransactions = async (req, res) => {
                 amount = txns.reduce((sum, t) => sum + parseFloat(t.amount), 0);
             }
 
+            const debitAccountsSet = new Set();
+            const creditAccountsSet = new Set();
+            txns.forEach(t => {
+                if (t.ledger_transaction_debitLedgerIdToledger?.name) debitAccountsSet.add(t.ledger_transaction_debitLedgerIdToledger.name);
+                if (t.ledger_transaction_creditLedgerIdToledger?.name) creditAccountsSet.add(t.ledger_transaction_creditLedgerIdToledger.name);
+            });
+            let debitAccountStr = [...debitAccountsSet].join(', ') || '-';
+            let creditAccountStr = [...creditAccountsSet].join(', ') || '-';
+
+            let customerVendor = '-';
+            let itemsList = [];
+            let skuList = [];
+            let qtyList = [];
+            let unitList = [];
+            let priceList = [];
+            let discList = [];
+            let taxList = [];
+            let whList = [];
+            let paymentMethod = '-';
+            let bankAccount = '-';
+            let cashAccount = '-';
+            let currency = 'INR';
+            let exchangeRate = 1.0;
+            let status = 'COMPLETED';
+            let referenceNo = '-';
+            let notes = note || '-';
+            let createdDate = primaryTxn.createdAt;
+            let lastUpdated = primaryTxn.createdAt;
+            let sourceModule = 'General Ledger';
+
+            if (key.startsWith('invoice_') && primaryTxn.invoice) {
+                customerVendor = primaryTxn.invoice.customer?.name || '-';
+                currency = primaryTxn.invoice.currency || 'INR';
+                exchangeRate = primaryTxn.invoice.exchangeRate || 1.0;
+                status = primaryTxn.invoice.status || 'UNPAID';
+                referenceNo = primaryTxn.invoice.manualReference || '-';
+                createdDate = primaryTxn.invoice.createdAt;
+                lastUpdated = primaryTxn.invoice.updatedAt;
+                sourceModule = 'Sales';
+                
+                const items = primaryTxn.invoice.invoiceitem || [];
+                itemsList = items.map(item => item.product?.name || item.description).filter(Boolean);
+                skuList = items.map(item => item.product?.sku).filter(Boolean);
+                qtyList = items.map(item => item.quantity);
+                unitList = items.map(item => item.uom?.symbol || item.uom?.name).filter(Boolean);
+                priceList = items.map(item => item.rate);
+                discList = items.map(item => item.discount);
+                taxList = items.map(item => item.taxRate);
+                whList = items.map(item => item.warehouse?.name).filter(Boolean);
+            }
+            else if (key.startsWith('purchasebill_') && primaryTxn.purchasebill) {
+                customerVendor = primaryTxn.purchasebill.vendor?.name || '-';
+                currency = primaryTxn.purchasebill.currency || 'INR';
+                exchangeRate = primaryTxn.purchasebill.exchangeRate || 1.0;
+                status = primaryTxn.purchasebill.status || 'UNPAID';
+                referenceNo = primaryTxn.purchasebill.billNumber || '-';
+                createdDate = primaryTxn.purchasebill.createdAt;
+                lastUpdated = primaryTxn.purchasebill.updatedAt;
+                sourceModule = 'Purchases';
+
+                const items = primaryTxn.purchasebill.purchasebillitem || [];
+                itemsList = items.map(item => item.product?.name || item.description).filter(Boolean);
+                skuList = items.map(item => item.product?.sku).filter(Boolean);
+                qtyList = items.map(item => item.quantity);
+                unitList = items.map(item => item.uom?.symbol || item.uom?.name).filter(Boolean);
+                priceList = items.map(item => item.rate);
+                discList = items.map(item => item.discount);
+                taxList = items.map(item => item.taxRate);
+                whList = items.map(item => item.warehouse?.name).filter(Boolean);
+            }
+            else if (key.startsWith('receipt_') && primaryTxn.receipt) {
+                customerVendor = primaryTxn.receipt.customer?.name || '-';
+                paymentMethod = primaryTxn.receipt.paymentMode || '-';
+                cashAccount = primaryTxn.receipt.cashBankAccount?.name || '-';
+                referenceNo = primaryTxn.receipt.referenceNo || primaryTxn.receipt.receiptNumber || '-';
+                createdDate = primaryTxn.receipt.createdAt;
+                sourceModule = 'Sales Receipts';
+            }
+            else if (key.startsWith('payment_') && primaryTxn.payment) {
+                customerVendor = primaryTxn.payment.vendor?.name || '-';
+                paymentMethod = primaryTxn.payment.paymentMode || '-';
+                bankAccount = primaryTxn.payment.bankLedger?.name || '-';
+                referenceNo = primaryTxn.payment.referenceNo || primaryTxn.payment.paymentNumber || '-';
+                createdDate = primaryTxn.payment.createdAt;
+                sourceModule = 'Purchase Payments';
+            }
+            else if (key.startsWith('posinvoice_') && primaryTxn.posinvoice) {
+                customerVendor = primaryTxn.posinvoice.customer?.name || 'Walk-in';
+                currency = primaryTxn.posinvoice.currency || 'INR';
+                status = primaryTxn.posinvoice.status || 'PAID';
+                createdDate = primaryTxn.posinvoice.createdAt;
+                sourceModule = 'POS';
+
+                const items = primaryTxn.posinvoice.posinvoiceitem || [];
+                itemsList = items.map(item => item.product?.name || item.description).filter(Boolean);
+                skuList = items.map(item => item.product?.sku).filter(Boolean);
+                qtyList = items.map(item => item.quantity);
+                unitList = items.map(item => item.uom?.symbol || item.uom?.name).filter(Boolean);
+                priceList = items.map(item => item.rate);
+                discList = items.map(item => item.discount);
+                taxList = items.map(item => item.taxRate);
+                whList = items.map(item => item.warehouse?.name).filter(Boolean);
+            }
+
             return {
                 id: primaryTxn.id,
                 date: primaryTxn.date,
@@ -2100,7 +2204,40 @@ const getAllTransactions = async (req, res) => {
                 amount,
                 fromTo: partyName || 'Unknown',
                 accountType: accountType || 'General',
-                note: note || '-'
+                note: note || '-',
+                debitAccount: debitAccountStr,
+                creditAccount: creditAccountStr,
+                customerVendor: vType === 'JOURNAL' ? '' : (customerVendor !== '-' ? customerVendor : (partyName || '-')),
+                customerName: primaryTxn.invoice?.customer?.name || primaryTxn.receipt?.customer?.name || primaryTxn.posinvoice?.customer?.name || '-',
+                vendorName: primaryTxn.purchasebill?.vendor?.name || primaryTxn.payment?.vendor?.name || '-',
+                postings: txns.map(t => ({
+                    id: t.id,
+                    debitAccount: t.ledger_transaction_debitLedgerIdToledger?.name || '-',
+                    creditAccount: t.ledger_transaction_creditLedgerIdToledger?.name || '-',
+                    amount: parseFloat(t.amount)
+                })),
+                
+                // Detailed product/item attributes
+                items: vType === 'JOURNAL' ? '' : (itemsList.join(', ') || '-'),
+                skus: vType === 'JOURNAL' ? '' : (skuList.join(', ') || '-'),
+                quantities: vType === 'JOURNAL' ? '' : (qtyList.join(', ') || '-'),
+                units: vType === 'JOURNAL' ? '' : (unitList.join(', ') || '-'),
+                prices: vType === 'JOURNAL' ? '' : (priceList.join(', ') || '-'),
+                discounts: vType === 'JOURNAL' ? '' : (discList.join(', ') || '-'),
+                taxes: vType === 'JOURNAL' ? '' : (taxList.join(', ') || '-'),
+                warehouses: vType === 'JOURNAL' ? '' : (whList.join(', ') || '-'),
+
+                // Accounting Details
+                currency,
+                exchangeRate,
+                status,
+                referenceNo,
+                paymentMethod,
+                bankAccount,
+                cashAccount,
+                createdDate,
+                lastUpdated,
+                sourceModule
             };
         });
 

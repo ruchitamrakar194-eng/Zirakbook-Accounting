@@ -11,5 +11,6 @@ router.get('/:id', authenticateToken, authorizePermissions('view sales'), salesI
 router.get('/public/:id', salesInvoiceController.getPublicInvoiceById);
 router.put('/:id', authenticateToken, authorizePermissions('edit sales'), salesInvoiceController.updateInvoice);
 router.delete('/:id', authenticateToken, authorizePermissions('delete sales'), salesInvoiceController.deleteInvoice);
+router.post('/:id/unpay', authenticateToken, authorizePermissions('edit sales'), salesInvoiceController.unpayInvoice);
 
 module.exports = router;

@@ -1278,6 +1278,14 @@ exports.Prisma.SalespersonScalarFieldEnum = {
   companyId: 'companyId'
 };
 
+exports.Prisma.DeliverypersonScalarFieldEnum = {
+  id: 'id',
+  name: 'name',
+  phone: 'phone',
+  email: 'email',
+  companyId: 'companyId'
+};
+
 exports.Prisma.SortOrder = {
   asc: 'asc',
   desc: 'desc'
@@ -1528,7 +1536,8 @@ exports.Prisma.ModelName = {
   paymentbillallocation: 'paymentbillallocation',
   transaction_numbering: 'transaction_numbering',
   auditlog: 'auditlog',
-  salesperson: 'salesperson'
+  salesperson: 'salesperson',
+  deliveryperson: 'deliveryperson'
 };
 
 /**

@@ -1280,6 +1280,13 @@ const updateInvoice = async (req, res) => {
             return res.status(404).json({ success: false, message: 'Invoice not found' });
         }
 
+        if (existingInvoice.paidAmount > 0 || existingInvoice.status === 'PAID' || existingInvoice.status === 'PARTIAL') {
+            return res.status(400).json({
+                success: false,
+                message: 'A paid or partially paid invoice cannot be edited. Please mark it as unpaid first.'
+            });
+        }
+
         // 2. Calculate new totals if items are provided
         let subtotal = existingInvoice.subtotal;
         let totalDiscount = existingInvoice.discountAmount;
@@ -2145,6 +2152,130 @@ const cleanupOrphanedJournals = async (req, res) => {
     }
 };
 
+const unpayInvoice = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const companyId = req.user?.companyId || req.body.companyId;
+
+        const invoiceId = parseInt(id);
+        const invoice = await prisma.invoice.findUnique({
+            where: { id: invoiceId },
+            include: { customer: true }
+        });
+
+        if (!invoice || invoice.companyId !== companyId) {
+            return res.status(404).json({ success: false, message: 'Invoice not found' });
+        }
+
+        // Find all receipt allocations for this invoice
+        const allocations = await prisma.receiptinvoiceallocation.findMany({
+            where: { invoiceId: invoice.id }
+        });
+
+        // Run in a transaction
+        await prisma.$transaction(async (tx) => {
+            // For each allocation, delete the associated receipt (reverting all ledger / journal entries)
+            for (const alloc of allocations) {
+                const receipt = await tx.receipt.findUnique({
+                    where: { id: alloc.receiptId }
+                });
+
+                if (receipt) {
+                    const fullReceipt = await tx.receipt.findUnique({
+                        where: { id: receipt.id },
+                        include: { allocations: true }
+                    });
+
+                    if (fullReceipt) {
+                        const oldDiscount = fullReceipt.discountAmount || 0;
+                        for (let i = 0; i < fullReceipt.allocations.length; i++) {
+                            const oldAlloc = fullReceipt.allocations[i];
+                            const oldAllocDiscount = (i === 0) ? oldDiscount : 0;
+                            
+                            // Revert invoice balances (paidAmount and balanceAmount)
+                            const inv = await tx.invoice.findUnique({ where: { id: oldAlloc.invoiceId } });
+                            if (inv) {
+                                const deltaPaid = -(oldAlloc.amount + oldAllocDiscount);
+                                const newPaid = Math.max(0, (inv.paidAmount || 0) + deltaPaid);
+                                const newBalance = Math.max(0, (inv.totalAmount || 0) - newPaid);
+                                await tx.invoice.update({
+                                    where: { id: oldAlloc.invoiceId },
+                                    data: {
+                                        paidAmount: newPaid,
+                                        balanceAmount: newBalance,
+                                        status: newBalance <= 0.01 ? 'PAID' : (newPaid > 0 ? 'PARTIAL' : 'UNPAID')
+                                    }
+                                });
+                            }
+                        }
+
+                        // Revert ledger balances
+                        const oldTransactions = await tx.transaction.findMany({
+                            where: { receiptId: fullReceipt.id, voucherType: 'RECEIPT' }
+                        });
+
+                        const oldLedgerChanges = {};
+                        for (const t of oldTransactions) {
+                            oldLedgerChanges[t.debitLedgerId] = (oldLedgerChanges[t.debitLedgerId] || 0) - t.amount;
+                            oldLedgerChanges[t.creditLedgerId] = (oldLedgerChanges[t.creditLedgerId] || 0) + t.amount;
+                        }
+
+                        for (const [ledgerId, change] of Object.entries(oldLedgerChanges)) {
+                            if (change !== 0) {
+                                await tx.ledger.update({
+                                    where: { id: parseInt(ledgerId) },
+                                    data: { currentBalance: { increment: change } }
+                                });
+                            }
+                        }
+
+                        // Delete allocations, transactions, journal entries and receipt
+                        await tx.receiptinvoiceallocation.deleteMany({ where: { receiptId: fullReceipt.id } });
+                        await tx.transaction.deleteMany({ where: { receiptId: fullReceipt.id } });
+
+                        const oldJournalIds = [...new Set(oldTransactions.map(t => t.journalEntryId).filter(Boolean))];
+                        if (oldJournalIds.length > 0) {
+                             await tx.journalentry.deleteMany({ where: { id: { in: oldJournalIds } } });
+                        }
+
+                        await tx.receipt.delete({ where: { id: fullReceipt.id } });
+                    }
+                }
+            }
+
+            // Finally, make sure this specific invoice is fully UNPAID
+            await tx.invoice.update({
+                where: { id: invoice.id },
+                data: {
+                    paidAmount: 0,
+                    balanceAmount: invoice.totalAmount,
+                    status: 'UNPAID'
+                }
+            });
+
+            // Re-sync customer account balance with their ledger
+            const customerLedger = await tx.ledger.findFirst({
+                where: { customerId: invoice.customerId }
+            });
+            if (customerLedger) {
+                await tx.customer.update({
+                    where: { id: invoice.customerId },
+                    data: { accountBalance: customerLedger.currentBalance }
+                });
+            }
+        });
+
+        // Audit Logging
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'UNPAY', 'Invoice', invoice.id, `Invoice #${invoice.invoiceNumber} marked as UNPAID, reverted payments.`);
+
+        res.status(200).json({ success: true, message: 'Invoice marked as unpaid and all associated payments reversed successfully' });
+    } catch (error) {
+        console.error('Error marking invoice as unpaid:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 module.exports = {
     createInvoice,
     getInvoices,
@@ -2154,5 +2285,6 @@ module.exports = {
     getNextNumber,
     getPublicInvoiceById,
     cleanupOrphanedJournals,
-    adjustInvoiceWithReturns
+    adjustInvoiceWithReturns,
+    unpayInvoice
 };

@@ -181,6 +181,7 @@ model company {
   transaction_numbering transaction_numbering[]
   auditlog              auditlog[]
   salesperson           salesperson[]
+  deliveryperson        deliveryperson[]
 
   @@index([planId], map: "Company_planId_fkey")
 }
@@ -1928,6 +1929,17 @@ model salesperson {
   company      company        @relation(fields: [companyId], references: [id], onDelete: Cascade)
   invoices     invoice[]
   purchasebill purchasebill[]
+
+  @@index([companyId])
+}
+
+model deliveryperson {
+  id        Int     @id @default(autoincrement())
+  name      String
+  phone     String?
+  email     String?
+  companyId Int
+  company   company @relation(fields: [companyId], references: [id], onDelete: Cascade)
 
   @@index([companyId])
 }

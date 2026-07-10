@@ -956,6 +956,19 @@ const updateBill = async (req, res) => {
             return res.status(200).json({ success: true, data: updatedBill });
         }
 
+        const checkBill = await prisma.purchasebill.findFirst({
+            where: { id: parseInt(id), companyId: parseInt(companyId) }
+        });
+        if (!checkBill) {
+            return res.status(404).json({ success: false, message: 'Bill not found' });
+        }
+        if (checkBill.paidAmount > 0 || checkBill.status === 'PAID' || checkBill.status === 'PARTIAL') {
+            return res.status(400).json({
+                success: false,
+                message: 'A paid or partially paid bill cannot be edited. Please mark it as unpaid first.'
+            });
+        }
+
         const updated = await prisma.$transaction(async (tx) => {
             const oldBill = await tx.purchasebill.findFirst({
                 where: { id: parseInt(id), companyId: parseInt(companyId) },
@@ -1568,6 +1581,136 @@ const cleanupOrphanedJournals = async (req, res) => {
     }
 };
 
+const unpayBill = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const companyId = req.user?.companyId || req.body.companyId;
+
+        const billId = parseInt(id);
+        const bill = await prisma.purchasebill.findUnique({
+            where: { id: billId },
+            include: { vendor: true }
+        });
+
+        if (!bill || bill.companyId !== companyId) {
+            return res.status(404).json({ success: false, message: 'Purchase bill not found' });
+        }
+
+        // Find all payment allocations for this purchase bill
+        const allocations = await prisma.paymentbillallocation.findMany({
+            where: { purchaseBillId: bill.id }
+        });
+
+        // Run in a transaction
+        await prisma.$transaction(async (tx) => {
+            // For each allocation, load the parent payment and delete/revert it
+            for (const alloc of allocations) {
+                const payment = await tx.payment.findUnique({
+                    where: { id: alloc.paymentId }
+                });
+
+                if (payment) {
+                    const fullPayment = await tx.payment.findUnique({
+                        where: { id: payment.id },
+                        include: {
+                            allocations: { include: { purchasebill: true } }
+                        }
+                    });
+
+                    if (fullPayment) {
+                        // Reverse Bills paid amounts based on allocations
+                        const oldDiscount = fullPayment.discountAmount || 0;
+                        for (let i = 0; i < fullPayment.allocations.length; i++) {
+                            const oldAlloc = fullPayment.allocations[i];
+                            const currentBill = await tx.purchasebill.findUnique({ where: { id: oldAlloc.purchaseBillId } });
+                            if (currentBill) {
+                                const oldAllocDiscount = (i === 0) ? oldDiscount : 0;
+                                const revPaid = Math.max(0, (currentBill.paidAmount || 0) - oldAlloc.amount - oldAllocDiscount);
+                                const revBalance = currentBill.totalAmount - revPaid;
+                                await tx.purchasebill.update({
+                                    where: { id: oldAlloc.purchaseBillId },
+                                    data: {
+                                        paidAmount: revPaid,
+                                        balanceAmount: revBalance,
+                                        status: revBalance <= 0.01 ? 'PAID' : (revPaid > 0 ? 'PARTIAL' : 'UNPAID')
+                                    }
+                                });
+                            }
+                        }
+
+                        // Calculate old ledger amounts to revert
+                        let oldLedgerAmount = 0;
+                        let oldLedgerDiscount = 0;
+                        const oldAllocatedSum = fullPayment.allocations.reduce((sum, a) => sum + a.amount, 0);
+                        const oldUnallocatedAmount = fullPayment.amount - oldAllocatedSum;
+
+                        for (let i = 0; i < fullPayment.allocations.length; i++) {
+                            const oldAlloc = fullPayment.allocations[i];
+                            const rate = oldAlloc.purchasebill?.exchangeRate || 1.0;
+                            oldLedgerAmount += oldAlloc.amount * rate;
+                            if (i === 0) {
+                                oldLedgerDiscount += oldDiscount * rate;
+                            }
+                        }
+                        oldLedgerAmount += oldUnallocatedAmount;
+
+                        // Reverse Vendor ledger balance
+                        const vendor = await tx.vendor.findUnique({ where: { id: fullPayment.vendorId } });
+                        if (vendor && vendor.ledgerId) {
+                            await tx.ledger.update({
+                                where: { id: vendor.ledgerId },
+                                data: { currentBalance: { increment: oldLedgerAmount + oldLedgerDiscount } }
+                            });
+                            await tx.vendor.update({
+                                where: { id: fullPayment.vendorId },
+                                data: { accountBalance: { increment: oldLedgerAmount + oldLedgerDiscount } }
+                            });
+                        }
+
+                        if (fullPayment.cashBankAccountId) {
+                            await tx.ledger.update({
+                                where: { id: fullPayment.cashBankAccountId },
+                                data: { currentBalance: { increment: oldLedgerAmount } }
+                            });
+                        }
+
+                        if (fullPayment.discountLedgerId && oldLedgerDiscount > 0) {
+                            await tx.ledger.update({
+                                where: { id: fullPayment.discountLedgerId },
+                                data: { currentBalance: { decrement: oldLedgerDiscount } }
+                            });
+                        }
+
+                        // Delete transactions, allocations and payment
+                        await tx.transaction.deleteMany({ where: { paymentId: fullPayment.id } });
+                        await tx.paymentbillallocation.deleteMany({ where: { paymentId: fullPayment.id } });
+                        await tx.payment.delete({ where: { id: fullPayment.id } });
+                    }
+                }
+            }
+
+            // Finally, make sure this specific bill is fully UNPAID
+            await tx.purchasebill.update({
+                where: { id: bill.id },
+                data: {
+                    paidAmount: 0,
+                    balanceAmount: bill.totalAmount,
+                    status: 'UNPAID'
+                }
+            });
+        });
+
+        // Audit Logging
+        const { logActivity } = require('../utils/auditLogger');
+        logActivity(req, 'UNPAY', 'PurchaseBill', bill.id, `Purchase Bill #${bill.billNumber} marked as UNPAID, reverted payments.`);
+
+        res.status(200).json({ success: true, message: 'Purchase bill marked as unpaid and all payments reverted successfully' });
+    } catch (error) {
+        console.error('Error marking purchase bill as unpaid:', error);
+        res.status(500).json({ success: false, message: error.message });
+    }
+};
+
 module.exports = {
     createBill,
     getBills,
@@ -1575,5 +1718,6 @@ module.exports = {
     updateBill,
     deleteBill,
     getNextNumber,
-    cleanupOrphanedJournals
+    cleanupOrphanedJournals,
+    unpayBill
 };

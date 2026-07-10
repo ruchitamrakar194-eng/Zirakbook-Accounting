@@ -12,5 +12,6 @@ router.get('/next-number', purchaseBillController.getNextNumber);
 router.get('/:id', purchaseBillController.getBillById);
 router.put('/:id', purchaseBillController.updateBill);
 router.delete('/:id', purchaseBillController.deleteBill);
+router.post('/:id/unpay', purchaseBillController.unpayBill);
 
 module.exports = router;
