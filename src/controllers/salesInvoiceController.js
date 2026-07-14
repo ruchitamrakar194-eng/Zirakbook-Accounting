@@ -84,6 +84,20 @@ const adjustInvoiceWithReturns = (invoice) => {
         });
     }
 
+    // Recalculate Other Charges from custom fields to add back
+    let otherChargesTotal = 0;
+    try {
+        if (invoice.customFields) {
+            const cf = typeof invoice.customFields === 'string'
+                ? JSON.parse(invoice.customFields)
+                : invoice.customFields;
+            const parsedOtherCharges = cf?._otherCharges || [];
+            otherChargesTotal = parsedOtherCharges.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
+        }
+    } catch (e) {
+        console.error('Error parsing custom fields for other charges in adjustInvoiceWithReturns:', e);
+    }
+
     // Recalculate invoice total
     let adjustedTotal = invoice.totalAmount;
     let adjustedSubtotal = invoice.subtotal;
@@ -110,6 +124,8 @@ const adjustInvoiceWithReturns = (invoice) => {
                 adjustedTotal = newTotalAmount;
             }
         }
+        // Add other charges back to adjustedTotal
+        adjustedTotal = adjustedTotal + otherChargesTotal;
     } else {
         adjustedTotal = Math.max(0, invoice.totalAmount - returnedTotal);
     }
@@ -271,6 +287,11 @@ const createInvoice = async (req, res) => {
         } else if (overallDiscount) {
             totalAmount = baseTotal - overallDiscount;
         }
+
+        // Calculate Other Charges total and add to invoice total
+        const otherChargesArr = Array.isArray(req.body.otherCharges) ? req.body.otherCharges : [];
+        const otherChargesTotal = otherChargesArr.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
+        totalAmount = totalAmount + otherChargesTotal;
 
         const result = await prisma.$transaction(async (tx) => {
 
@@ -878,6 +899,48 @@ const createInvoice = async (req, res) => {
                 });
             }
 
+            // D. Other Charges — double-entry per charge (DR Customer / CR selected ledger)
+            if (otherChargesArr.length > 0) {
+                for (const charge of otherChargesArr) {
+                    const chargeAmount = parseFloat(charge.amount) || 0;
+                    if (!charge.accountId || chargeAmount <= 0) continue;
+
+                    const chargeLedger = await tx.ledger.findUnique({
+                        where: { id: parseInt(charge.accountId) }
+                    });
+
+                    if (!chargeLedger) continue;
+
+                    const chargeAmtConverted = chargeAmount * docExchangeRate;
+
+                    await tx.transaction.create({
+                        data: {
+                            date: new Date(date),
+                            voucherType: 'SALES',
+                            voucherNumber: invoiceNumber,
+                            debitLedgerId: customerLedgerId,
+                            creditLedgerId: chargeLedger.id,
+                            amount: chargeAmtConverted,
+                            narration: `Other Charges (${chargeLedger.name}) on Invoice: ${invoiceNumber}`,
+                            companyId: parseInt(companyId),
+                            journalEntryId: journal.id,
+                            invoiceId: invoice.id
+                        }
+                    });
+
+                    // Customer receivable increases (DR)
+                    await tx.ledger.update({
+                        where: { id: customerLedgerId },
+                        data: { currentBalance: { increment: chargeAmtConverted } }
+                    });
+                    // Selected account increases (CR)
+                    await tx.ledger.update({
+                        where: { id: chargeLedger.id },
+                        data: { currentBalance: { increment: chargeAmtConverted } }
+                    });
+                }
+            }
+
             return invoice;
         }, {
             timeout: 90000 // 90 seconds timeout
@@ -1348,6 +1411,11 @@ const updateInvoice = async (req, res) => {
                 totalAmount = baseTotal - ovDiscount;
             }
         }
+
+        // Calculate Other Charges total and add to totalAmount
+        const otherChargesArrUpdate = Array.isArray(req.body.otherCharges) ? req.body.otherCharges : [];
+        const otherChargesTotalUpdate = otherChargesArrUpdate.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
+        totalAmount = totalAmount + otherChargesTotalUpdate;
 
         // 3. Update Invoice in a transaction to handle accounting adjustments
         const result = await prisma.$transaction(async (tx) => {
@@ -1826,6 +1894,54 @@ const updateInvoice = async (req, res) => {
 
                     await tx.ledger.update({ where: { id: cogsLedger.id }, data: { currentBalance: { increment: totalCOGS } } });
                     await tx.ledger.update({ where: { id: finalCreditLedger.id }, data: { currentBalance: { decrement: totalCOGS } } });
+                }
+            }
+
+            // G. Other Charges — double-entry per charge on update (DR Customer / CR selected ledger)
+            if (otherChargesArrUpdate.length > 0 && customer && customer.ledgerId) {
+                const docExchangeRateUpdate = updatedInvoice.exchangeRate || 1.0;
+                for (const charge of otherChargesArrUpdate) {
+                    const chargeAmount = parseFloat(charge.amount) || 0;
+                    if (!charge.accountId || chargeAmount <= 0) continue;
+
+                    const chargeLedger = await tx.ledger.findUnique({
+                        where: { id: parseInt(charge.accountId) }
+                    });
+
+                    if (!chargeLedger) continue;
+
+                    const chargeAmtConverted = chargeAmount * docExchangeRateUpdate;
+
+                    // Find the journal entry created for this invoice update
+                    const journalForCharge = await tx.journalentry.findFirst({
+                        where: { companyId: parseInt(companyId), voucherNumber: updatedInvoice.invoiceNumber }
+                    });
+
+                    await tx.transaction.create({
+                        data: {
+                            date: updatedInvoice.date,
+                            voucherType: 'SALES',
+                            voucherNumber: updatedInvoice.invoiceNumber,
+                            debitLedgerId: customer.ledgerId,
+                            creditLedgerId: chargeLedger.id,
+                            amount: chargeAmtConverted,
+                            narration: `Other Charges (${chargeLedger.name}) on Updated Invoice: ${updatedInvoice.invoiceNumber}`,
+                            companyId: parseInt(companyId),
+                            invoiceId: updatedInvoice.id,
+                            journalEntryId: journalForCharge?.id || null
+                        }
+                    });
+
+                    // Customer receivable increases (DR)
+                    await tx.ledger.update({
+                        where: { id: customer.ledgerId },
+                        data: { currentBalance: { increment: chargeAmtConverted } }
+                    });
+                    // Selected account increases (CR)
+                    await tx.ledger.update({
+                        where: { id: chargeLedger.id },
+                        data: { currentBalance: { increment: chargeAmtConverted } }
+                    });
                 }
             }
 

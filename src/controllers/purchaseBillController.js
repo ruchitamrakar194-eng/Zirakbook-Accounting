@@ -184,6 +184,10 @@ const createBill = async (req, res) => {
 
         const totalDiscount = calculatedItemDiscount + overallDiscountAmt;
 
+        const otherChargesArr = Array.isArray(req.body.otherCharges) ? req.body.otherCharges : [];
+        const otherChargesTotal = otherChargesArr.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
+        totalAmountValue = totalAmountValue + otherChargesTotal;
+
         const result = await prisma.$transaction(async (tx) => {
             // 1. Create Purchase Bill
             const bill = await tx.purchasebill.create({
@@ -522,6 +526,48 @@ const createBill = async (req, res) => {
                 });
                 await tx.ledger.update({ where: { id: discountReceivedLedger.id }, data: { currentBalance: { increment: ledgerDiscountAmount } } });
                 await tx.ledger.update({ where: { id: creditLedgerId }, data: { currentBalance: { decrement: ledgerDiscountAmount } } });
+            }
+
+            // Other Charges — double-entry per charge (DR selected ledger / CR Vendor)
+            if (otherChargesArr.length > 0) {
+                for (const charge of otherChargesArr) {
+                    const chargeAmount = parseFloat(charge.amount) || 0;
+                    if (!charge.accountId || chargeAmount <= 0) continue;
+
+                    const chargeLedger = await tx.ledger.findUnique({
+                        where: { id: parseInt(charge.accountId) }
+                    });
+
+                    if (!chargeLedger) continue;
+
+                    const chargeAmtConverted = chargeAmount * docExchangeRate;
+
+                    await tx.transaction.create({
+                        data: {
+                            date: new Date(date),
+                            voucherType: 'PURCHASE',
+                            voucherNumber: billNumber,
+                            debitLedgerId: chargeLedger.id, // Selected charge ledger (Dr Expense/Asset)
+                            creditLedgerId: creditLedgerId, // Vendor ledger (Cr Liability)
+                            amount: chargeAmtConverted,
+                            narration: `Other Charges (${chargeLedger.name}) on Purchase Bill: ${billNumber}`,
+                            companyId: parseInt(companyId),
+                            journalEntryId: journalEntry.id,
+                            purchaseBillId: bill.id
+                        }
+                    });
+
+                    // Selected charge ledger increases (DR)
+                    await tx.ledger.update({
+                        where: { id: chargeLedger.id },
+                        data: { currentBalance: { increment: chargeAmtConverted } }
+                    });
+                    // Vendor ledger increases (CR)
+                    await tx.ledger.update({
+                        where: { id: creditLedgerId },
+                        data: { currentBalance: { increment: chargeAmtConverted } }
+                    });
+                }
             }
 
             // Update Vendor Balance (Credit increases Liability)
@@ -1254,6 +1300,10 @@ const updateBill = async (req, res) => {
 
             const totalDiscount = calculatedItemDiscount + overallDiscountAmt;
 
+            const otherChargesArrUpdate = Array.isArray(req.body.otherCharges) ? req.body.otherCharges : [];
+            const otherChargesTotalUpdate = otherChargesArrUpdate.reduce((sum, c) => sum + (parseFloat(c.amount) || 0), 0);
+            totalAmountValue = totalAmountValue + otherChargesTotalUpdate;
+
             // Resolve standard accounts
             const resolveLedger = async (namePattern, type) => {
                 let ledger = await tx.ledger.findFirst({
@@ -1453,6 +1503,48 @@ const updateBill = async (req, res) => {
                 });
                 await tx.ledger.update({ where: { id: discountReceivedLedger.id }, data: { currentBalance: { increment: ledgerDiscountAmount } } });
                 await tx.ledger.update({ where: { id: newVendorLedgerId }, data: { currentBalance: { decrement: ledgerDiscountAmount } } });
+            }
+
+            // Other Charges — double-entry per charge on update (DR selected ledger / CR Vendor)
+            if (otherChargesArrUpdate.length > 0) {
+                for (const charge of otherChargesArrUpdate) {
+                    const chargeAmount = parseFloat(charge.amount) || 0;
+                    if (!charge.accountId || chargeAmount <= 0) continue;
+
+                    const chargeLedger = await tx.ledger.findUnique({
+                        where: { id: parseInt(charge.accountId) }
+                    });
+
+                    if (!chargeLedger) continue;
+
+                    const chargeAmtConverted = chargeAmount * docExchangeRate;
+
+                    await tx.transaction.create({
+                        data: {
+                            date: targetDate,
+                            voucherType: 'PURCHASE',
+                            voucherNumber: targetBillNumber,
+                            debitLedgerId: chargeLedger.id, // Selected charge ledger (Dr Expense/Asset)
+                            creditLedgerId: newVendorLedgerId, // Vendor ledger (Cr Liability)
+                            amount: chargeAmtConverted,
+                            narration: `Other Charges (${chargeLedger.name}) on Purchase Bill: ${targetBillNumber}`,
+                            companyId: parseInt(companyId),
+                            journalEntryId: journalEntry.id,
+                            purchaseBillId: oldBill.id
+                        }
+                    });
+
+                    // Selected charge ledger increases (DR)
+                    await tx.ledger.update({
+                        where: { id: chargeLedger.id },
+                        data: { currentBalance: { increment: chargeAmtConverted } }
+                    });
+                    // Vendor ledger increases (CR)
+                    await tx.ledger.update({
+                        where: { id: newVendorLedgerId },
+                        data: { currentBalance: { increment: chargeAmtConverted } }
+                    });
+                }
             }
 
             // 11. Update Vendor Balance (Credit increases Liability)
